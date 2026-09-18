@@ -212,7 +212,7 @@ async function collectSnapshot(env) {
 
   return {
     ok: true,
-    version: "2.3",
+    version: "2.2",
     source: "Bitvavo public REST API",
     collectedAt: new Date().toISOString(),
     config: {
@@ -462,7 +462,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.2",
+          version: "2.3",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish"
