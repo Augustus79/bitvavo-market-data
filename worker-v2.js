@@ -4,6 +4,7 @@ const GITHUB_OWNER = "Augustus79";
 const GITHUB_REPO = "bitvavo-market-data";
 const GITHUB_FILE = "snapshot.json";
 const GITHUB_BRANCH = "main";
+const PRIVATE_ACCOUNT_FILE = "account-state.json";
 
 const MAX_DEEP_MARKETS = 9;
 const MIN_VOLUME_QUOTE = 100000;
@@ -27,7 +28,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.2"
+    "User-Agent": "bitvavo-collector/2.3"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -211,7 +212,7 @@ async function collectSnapshot(env) {
 
   return {
     ok: true,
-    version: "2.2",
+    version: "2.3",
     source: "Bitvavo public REST API",
     collectedAt: new Date().toISOString(),
     config: {
@@ -248,6 +249,130 @@ function utf8ToBase64(text) {
   return btoa(binary);
 }
 
+async function publishJsonToRepo({ owner, repo, path, branch = "main", data, token, message }) {
+  if (!token) throw new Error("GitHub token missing");
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "Authorization": `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "bitvavo-collector/2.3"
+  };
+
+  let sha;
+  const existing = await fetch(`${apiUrl}?ref=${branch}`, { headers });
+  if (existing.ok) {
+    const existingData = await existing.json();
+    sha = existingData.sha;
+  } else if (existing.status !== 404) {
+    const text = await existing.text();
+    throw new Error(`GitHub read ${existing.status}: ${text.slice(0, 400)}`);
+  }
+
+  const body = {
+    message,
+    content: utf8ToBase64(JSON.stringify(data, null, 2)),
+    branch
+  };
+  if (sha) body.sha = sha;
+
+  const response = await fetch(apiUrl, {
+    method: "PUT",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub write ${response.status}: ${text.slice(0, 500)}`);
+  }
+  const result = await response.json();
+  return {
+    path: result.content?.path,
+    sha: result.content?.sha,
+    commit: result.commit?.sha
+  };
+}
+
+function parsePrivateRepo(value) {
+  if (!value || typeof value !== "string" || !value.includes("/")) return null;
+  const [owner, repo] = value.split("/");
+  return owner && repo ? { owner, repo } : null;
+}
+
+async function collectPrivateAccountState(env) {
+  const [balances, openOrders, fees] = await Promise.all([
+    getJson(`${BITVAVO}/balance`, env),
+    getJson(`${BITVAVO}/ordersOpen`, env),
+    getJson(`${BITVAVO}/account/fees?quote=EUR`, env)
+  ]);
+
+  const normalizedBalances = Array.isArray(balances)
+    ? balances.map((b) => ({
+        symbol: b?.symbol ?? null,
+        available: num(b?.available),
+        inOrder: num(b?.inOrder)
+      })).filter((b) => b.symbol)
+    : [];
+
+  const normalizedOrders = Array.isArray(openOrders)
+    ? openOrders.map((o) => ({
+        orderId: o?.orderId ?? null,
+        market: o?.market ?? null,
+        side: o?.side ?? null,
+        orderType: o?.orderType ?? null,
+        status: o?.status ?? null,
+        amount: num(o?.amount),
+        amountRemaining: num(o?.amountRemaining),
+        price: num(o?.price),
+        stopPrice: num(o?.stopPrice),
+        created: o?.created ?? null,
+        updated: o?.updated ?? null
+      }))
+    : [];
+
+  return {
+    ok: true,
+    version: "1.0",
+    source: "Bitvavo private REST API (read-only key)",
+    collectedAt: new Date().toISOString(),
+    permissionsExpected: {
+      read: true,
+      trade: false,
+      withdraw: false
+    },
+    balances: normalizedBalances,
+    openOrders: normalizedOrders,
+    openOrderCount: normalizedOrders.length,
+    nonEurAssetCount: normalizedBalances.filter((b) =>
+      b.symbol !== "EUR" && ((b.available || 0) > 0 || (b.inOrder || 0) > 0)
+    ).length,
+    fees: {
+      tier: fees?.tier ?? null,
+      volume30dEur: num(fees?.volume),
+      makerPct: num(fees?.maker) === null ? null : num(fees?.maker) * 100,
+      takerPct: num(fees?.taker) === null ? null : num(fees?.taker) * 100
+    }
+  };
+}
+
+async function publishPrivateAccountState(env) {
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!target || !env?.PRIVATE_GITHUB_TOKEN) {
+    return { ok: false, skipped: true, reason: "private GitHub target not configured" };
+  }
+  const account = await collectPrivateAccountState(env);
+  const github = await publishJsonToRepo({
+    owner: target.owner,
+    repo: target.repo,
+    path: PRIVATE_ACCOUNT_FILE,
+    branch: "main",
+    data: account,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: "Update private Bitvavo account state"
+  });
+  return { ok: true, collectedAt: account.collectedAt, github };
+}
+
 async function publishToGitHub(snapshot, token) {
   if (!token) {
     throw new Error("GITHUB_TOKEN absent du Worker");
@@ -260,7 +385,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.2"
+    "User-Agent": "bitvavo-collector/2.3"
   };
 
   let sha;
@@ -342,7 +467,8 @@ export default {
             market: "/market/BTC-EUR",
             publish: "/publish"
           },
-          scheduledHandler: true
+          scheduledHandler: true,
+          privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN)
         });
       }
 
@@ -403,10 +529,19 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(
-      buildAndPublish(env).catch((error) => {
-        console.error("Scheduled publish failed:", error);
-      })
-    );
+    const publicJob = buildAndPublish(env).catch((error) => {
+      console.error("Scheduled public snapshot failed:", error);
+    });
+    ctx.waitUntil(publicJob);
+
+    const scheduledAt = new Date(event.scheduledTime || Date.now());
+    const shouldSyncPrivate = scheduledAt.getUTCMinutes() === 0;
+    if (shouldSyncPrivate && env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN) {
+      ctx.waitUntil(
+        publishPrivateAccountState(env).catch((error) => {
+          console.error("Scheduled private account sync failed:", error);
+        })
+      );
+    }
   }
 };
