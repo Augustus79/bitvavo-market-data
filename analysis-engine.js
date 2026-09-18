@@ -245,6 +245,27 @@ function structureForFamily(family, entry, m5, m15, h1) {
   return { stop, stopMethod, target, targetMethod };
 }
 
+function compactMetrics(m) {
+  return {
+    last: m.last ?? null,
+    lastOpen: m.lastOpen ?? null,
+    lastBullish: m.lastBullish ?? null,
+    ema20: m.ema20 ?? null,
+    ema50: m.ema50 ?? null,
+    atr: m.atr ?? null,
+    atrPct: m.atrPct ?? null,
+    trend: m.trend ?? null,
+    breakout: m.breakout ?? false,
+    breakdown: m.breakdown ?? false,
+    volumeRatio: m.volumeRatio ?? null,
+    high20: m.high20 ?? null,
+    low20: m.low20 ?? null,
+    ret1h: m.ret1h ?? null,
+    ret4h: m.ret4h ?? null,
+    quality: m.quality
+  };
+}
+
 function evaluate(market, x, btc, regime, asOfMs) {
   const m5 = tfMetrics(x.candles["5m"], "5m", asOfMs);
   const m15 = tfMetrics(x.candles["15m"], "15m", asOfMs);
@@ -418,9 +439,9 @@ function evaluate(market, x, btc, regime, asOfMs) {
     suggestedAmountEur: amount ? Number(amount.toFixed(2)) : null,
     candidateScores: Object.fromEntries(candidates.map((q) => [q.family, Number(q.score.toFixed(2))])),
     metrics: {
-      "5m": m5,
-      "15m": m15,
-      "1h": h1,
+      "5m": compactMetrics(m5),
+      "15m": compactMetrics(m15),
+      "1h": compactMetrics(h1),
       relative1hVsBTC: rel1h,
       relative4hVsBTC: rel4h,
       book
