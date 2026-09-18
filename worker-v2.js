@@ -465,11 +465,27 @@ export default {
           version: "2.3",
           routes: {
             market: "/market/BTC-EUR",
-            publish: "/publish"
+            publish: "/publish",
+            privateSync: "/sync-private (POST, X-Private-Sync-Key required)"
           },
           scheduledHandler: true,
-          privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN)
+          privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN),
+          privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY)
         });
+      }
+
+      if (url.pathname === "/sync-private") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.PRIVATE_SYNC_KEY) {
+          return jsonResponse({ ok: false, error: "PRIVATE_SYNC_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Private-Sync-Key");
+        if (!supplied || supplied !== env.PRIVATE_SYNC_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await publishPrivateAccountState(env));
       }
 
       if (url.pathname === "/publish") {
