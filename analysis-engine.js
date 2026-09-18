@@ -1,4 +1,4 @@
-// Analysis engine v0.3 for Bitvavo snapshot v2.2.
+// Analysis engine v0.4 for Bitvavo snapshot v2.2.
 // Pure functions: no API keys, no trading, no order execution.
 
 const CFG = {
@@ -116,7 +116,44 @@ function evaluate(market,x,btc,regime){
   }
 
   candidates.sort((a,b)=>b.score-a.score);
-  const best=candidates[0], family=best.family, reasons=[...best.reasons], score=best.score;
+  const best=candidates[0], family=best.family, reasons=[...best.reasons], contextScore=best.score;
+
+  // A setup may have an excellent context but is not actionable without a fresh trigger.
+  let trigger=false, triggerReasons=[];
+  if(family==="trend pullback"){
+    const nearEma=m15?.ema20 && Math.abs(m15.last-m15.ema20)/m15.ema20*100 <= Math.max(0.35,(m15?.atrPct||0)*0.65);
+    const recovery=m5?.trend===1 && m5?.ema20 && m5.last>m5.ema20;
+    const participation=(m5?.volumeRatio||0)>=0.8;
+    trigger=Boolean(nearEma && recovery && participation);
+    if(nearEma) triggerReasons.push("pullback zone reached");
+    if(recovery) triggerReasons.push("5m recovery confirmed");
+    if(participation) triggerReasons.push("5m participation confirmed");
+  } else if(family==="confirmed breakout"){
+    const broke=Boolean(m15?.breakout || m5?.breakout);
+    const vol=Boolean((m15?.volumeRatio||0)>=1.3 || (m5?.volumeRatio||0)>=1.5);
+    trigger=broke && vol;
+    if(broke) triggerReasons.push("range break confirmed");
+    if(vol) triggerReasons.push("breakout volume confirmed");
+  } else if(family==="momentum/relative strength"){
+    const aligned=Boolean(h1?.trend===1 && m15?.trend===1 && m5?.trend===1);
+    const rs=market!=="BTC-EUR" && rel24>=2;
+    const active=Boolean((m15?.volumeRatio||0)>=1.0 || (m5?.volumeRatio||0)>=1.2);
+    trigger=aligned && rs && active;
+    if(aligned) triggerReasons.push("multi-timeframe trend aligned");
+    if(rs) triggerReasons.push("relative strength confirmed");
+    if(active) triggerReasons.push("active volume confirmed");
+  } else if(family==="mean reversion"){
+    const priorWeakness=Boolean(h1?.trend<=0 && m15?.trend===-1);
+    const reversal=Boolean(m5?.trend===1 && m5?.ema20 && m5.last>m5.ema20);
+    const vol=Boolean((m5?.volumeRatio||0)>=1.2);
+    trigger=priorWeakness && reversal && vol;
+    if(priorWeakness) triggerReasons.push("prior weakness confirmed");
+    if(reversal) triggerReasons.push("5m reversal confirmed");
+    if(vol) triggerReasons.push("reversal volume confirmed");
+  }
+  const triggerScore = trigger ? 2 : 0;
+  const score=clamp(contextScore + triggerScore,0,10);
+  const setupState=trigger ? "TRIGGERED" : (contextScore>=CFG.scoreB ? "ARMED" : "WATCH");
 
   const entry=n(x.ticker.ask);
   const A=m15?.atr || m5?.atr;
@@ -133,12 +170,13 @@ function evaluate(market,x,btc,regime){
   const netRR=netRiskPct>0?netRewardPct/netRiskPct:null;
 
   const grade=score>=CFG.scoreA?"A":score>=CFG.scoreB?"B":null;
-  const action=grade&&netRR>=CFG.minNetRR?"BUY":"WAIT";
-  if(action==="WAIT" && grade && !(netRR>=CFG.minNetRR)) reasons.push("net R/R below threshold");
+  const action=trigger&&grade&&netRR>=CFG.minNetRR?"BUY":"WAIT";
+  if(!trigger && contextScore>=CFG.scoreB) reasons.push("context qualified but entry trigger absent");
+  if(action==="WAIT" && trigger && grade && !(netRR>=CFG.minNetRR)) reasons.push("net R/R below threshold");
   const riskBudget=grade==="A"?mean(CFG.riskA):grade==="B"?mean(CFG.riskB):null;
   const amount=(action==="BUY"&&riskBudget&&netRiskPct>0)?riskBudget/(netRiskPct/100):null;
 
-  return {market,action,grade,score:Number(score.toFixed(2)),family,btcRegime:regime,entry,stop,
+  return {market,action,setupState,grade,score:Number(score.toFixed(2)),contextScore:Number(contextScore.toFixed(2)),trigger,triggerReasons,family,btcRegime:regime,entry,stop,
     target2R:grossTarget,netRR:netRR===null?null:Number(netRR.toFixed(2)),riskPct,roundTripCostPct,
     suggestedRiskEur:riskBudget,suggestedAmountEur:amount?Number(amount.toFixed(2)):null,
     candidateScores:Object.fromEntries(candidates.map(x=>[x.family,Number(x.score.toFixed(2))])),
@@ -149,7 +187,7 @@ function analyze(snapshot){
   const btc=snapshot.deep["BTC-EUR"]; if(!btc) throw new Error("BTC-EUR missing");
   const regime=btcRegime(btc);
   const signals=Object.entries(snapshot.deep).map(([m,x])=>evaluate(m,x,btc,regime)).sort((a,b)=>b.score-a.score);
-  return {engineVersion:"0.3",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:new Date().toISOString(),
+  return {engineVersion:"0.4",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:new Date().toISOString(),
     btcRegime:regime,config:CFG,actionable:signals.filter(x=>x.action!=="WAIT"),signals};
 }
 
