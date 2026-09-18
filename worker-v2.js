@@ -329,7 +329,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.0",
+          version: "2.1",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish"
