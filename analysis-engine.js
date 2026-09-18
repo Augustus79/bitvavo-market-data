@@ -1,4 +1,4 @@
-// Analysis engine v0.4 for Bitvavo snapshot v2.2.
+// Analysis engine v0.5 for Bitvavo snapshot v2.2.
 // Pure functions: no API keys, no trading, no order execution.
 
 const CFG = {
@@ -169,26 +169,41 @@ function evaluate(market,x,btc,regime){
   const netRiskPct=riskPct!==null?riskPct+roundTripCostPct:null;
   const netRR=netRiskPct>0?netRewardPct/netRiskPct:null;
 
-  const grade=score>=CFG.scoreA?"A":score>=CFG.scoreB?"B":null;
-  const action=trigger&&grade&&netRR>=CFG.minNetRR?"BUY":"WAIT";
+  const contextGrade=contextScore>=CFG.scoreA?"A":contextScore>=CFG.scoreB?"B":null;
+  const tradeGrade=trigger ? (score>=CFG.scoreA?"A":score>=CFG.scoreB?"B":null) : null;
+  const blockers=[];
+  if(!trigger){
+    if(contextScore>=CFG.scoreB) blockers.push("entry trigger absent");
+    else blockers.push("context score below B threshold");
+  }
+  if(trigger && !tradeGrade) blockers.push("triggered but trade score below B threshold");
+  if(!(netRR>=CFG.minNetRR)) blockers.push("net R/R below threshold");
+  if(!complete) blockers.push("intraday history incomplete");
+  const action=trigger&&tradeGrade&&netRR>=CFG.minNetRR?"BUY":"WAIT";
+  const finalState=action==="BUY"?"BUY":setupState;
   if(!trigger && contextScore>=CFG.scoreB) reasons.push("context qualified but entry trigger absent");
-  if(action==="WAIT" && trigger && grade && !(netRR>=CFG.minNetRR)) reasons.push("net R/R below threshold");
-  const riskBudget=grade==="A"?mean(CFG.riskA):grade==="B"?mean(CFG.riskB):null;
+  if(action==="WAIT" && trigger && tradeGrade && !(netRR>=CFG.minNetRR)) reasons.push("net R/R below threshold");
+  const riskBudget=tradeGrade==="A"?mean(CFG.riskA):tradeGrade==="B"?mean(CFG.riskB):null;
   const amount=(action==="BUY"&&riskBudget&&netRiskPct>0)?riskBudget/(netRiskPct/100):null;
 
-  return {market,action,setupState,grade,score:Number(score.toFixed(2)),contextScore:Number(contextScore.toFixed(2)),trigger,triggerReasons,family,btcRegime:regime,entry,stop,
+  return {market,action,setupState:finalState,contextGrade,tradeGrade,score:Number(score.toFixed(2)),contextScore:Number(contextScore.toFixed(2)),trigger,triggerReasons,blockers,family,btcRegime:regime,entry,stop,
     target2R:grossTarget,netRR:netRR===null?null:Number(netRR.toFixed(2)),riskPct,roundTripCostPct,
     suggestedRiskEur:riskBudget,suggestedAmountEur:amount?Number(amount.toFixed(2)):null,
     candidateScores:Object.fromEntries(candidates.map(x=>[x.family,Number(x.score.toFixed(2))])),
     metrics:{"5m":m5,"15m":m15,"1h":h1,relative24hVsBTC:rel24,book},reasons};
 }
-function analyze(snapshot){
+function analyze(snapshot, now=new Date()){
   if(snapshot.version!=="2.2") throw new Error("Expected snapshot v2.2");
+  const collectedAt=new Date(snapshot.collectedAt);
+  if(Number.isNaN(collectedAt.getTime())) throw new Error("Invalid snapshot collectedAt");
+  const ageMin=(now.getTime()-collectedAt.getTime())/60000;
+  const fresh=ageMin>=0 && ageMin<=CFG.maxSnapshotAgeMin;
   const btc=snapshot.deep["BTC-EUR"]; if(!btc) throw new Error("BTC-EUR missing");
   const regime=btcRegime(btc);
   const signals=Object.entries(snapshot.deep).map(([m,x])=>evaluate(m,x,btc,regime)).sort((a,b)=>b.score-a.score);
-  return {engineVersion:"0.4",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:new Date().toISOString(),
-    btcRegime:regime,config:CFG,actionable:signals.filter(x=>x.action!=="WAIT"),signals};
+  const actionable=fresh ? signals.filter(x=>x.action==="BUY") : [];
+  return {engineVersion:"0.5",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:now.toISOString(),
+    snapshotAgeMin:Number(ageMin.toFixed(2)),snapshotFresh:fresh,btcRegime:regime,config:CFG,actionable,signals};
 }
 
 export { analyze };
