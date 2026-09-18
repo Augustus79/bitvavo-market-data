@@ -11,13 +11,34 @@ const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 50;
 const CANDLE_LIMIT = 120;
 
-async function getJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "bitvavo-collector/2.0"
-    }
-  });
+async function hmacHex(secret, payload) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  return [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function getJson(url, env) {
+  const parsed = new URL(url);
+  const path = parsed.pathname + parsed.search;
+  const timestamp = Date.now().toString();
+  const headers = {
+    "Accept": "application/json",
+    "User-Agent": "bitvavo-collector/2.1"
+  };
+
+  if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
+    const payload = timestamp + "GET" + path;
+    headers["Bitvavo-Access-Key"] = env.BITVAVO_API_KEY;
+    headers["Bitvavo-Access-Timestamp"] = timestamp;
+    headers["Bitvavo-Access-Signature"] = await hmacHex(env.BITVAVO_API_SECRET, payload);
+    headers["Bitvavo-Access-Window"] = "10000";
+  }
+
+  const response = await fetch(url, { headers });
 
   if (!response.ok) {
     const text = await response.text();
@@ -125,12 +146,12 @@ function selectDeepMarkets(universe) {
   };
 }
 
-async function collectDeepMarket(market, ticker) {
+async function collectDeepMarket(market, ticker, env) {
   const [book, candles5m, candles15m, candles1h] = await Promise.all([
-    getJson(`${BITVAVO}/${market}/book?depth=${BOOK_DEPTH}`),
-    getJson(`${BITVAVO}/${market}/candles?interval=5m&limit=${CANDLE_LIMIT}`),
-    getJson(`${BITVAVO}/${market}/candles?interval=15m&limit=${CANDLE_LIMIT}`),
-    getJson(`${BITVAVO}/${market}/candles?interval=1h&limit=${CANDLE_LIMIT}`)
+    getJson(`${BITVAVO}/${market}/book?depth=${BOOK_DEPTH}`, env),
+    getJson(`${BITVAVO}/${market}/candles?interval=5m&limit=${CANDLE_LIMIT}`, env),
+    getJson(`${BITVAVO}/${market}/candles?interval=15m&limit=${CANDLE_LIMIT}`, env),
+    getJson(`${BITVAVO}/${market}/candles?interval=1h&limit=${CANDLE_LIMIT}`, env)
   ]);
 
   return {
@@ -150,8 +171,8 @@ async function collectDeepMarket(market, ticker) {
   };
 }
 
-async function collectSnapshot() {
-  const ticker24h = await getJson(`${BITVAVO}/ticker/24h`);
+async function collectSnapshot(env) {
+  const ticker24h = await getJson(`${BITVAVO}/ticker/24h`, env);
 
   if (!Array.isArray(ticker24h)) {
     throw new Error("Bitvavo ticker/24h did not return an array");
@@ -172,7 +193,7 @@ async function collectSnapshot() {
 
     const results = await Promise.all(
       batch.map((market) =>
-        collectDeepMarket(market, tickerMap.get(market))
+        collectDeepMarket(market, tickerMap.get(market), env)
       )
     );
 
@@ -183,7 +204,7 @@ async function collectSnapshot() {
 
   return {
     ok: true,
-    version: "2.0",
+    version: "2.1",
     source: "Bitvavo public REST API",
     collectedAt: new Date().toISOString(),
     config: {
@@ -231,7 +252,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.0"
+    "User-Agent": "bitvavo-collector/2.1"
   };
 
   let sha;
@@ -286,7 +307,7 @@ async function publishToGitHub(snapshot, token) {
 }
 
 async function buildAndPublish(env) {
-  const snapshot = await collectSnapshot();
+  const snapshot = await collectSnapshot(env);
   const github = await publishToGitHub(snapshot, env.GITHUB_TOKEN);
 
   return {
@@ -343,7 +364,8 @@ export default {
 
       const market = match[1];
       const ticker24h = await getJson(
-        `${BITVAVO}/ticker/24h?market=${market}`
+        `${BITVAVO}/ticker/24h?market=${market}`,
+        env
       );
       const rawTicker = Array.isArray(ticker24h)
         ? ticker24h[0]
@@ -351,7 +373,8 @@ export default {
 
       const data = await collectDeepMarket(
         market,
-        compactTicker(rawTicker)
+        compactTicker(rawTicker),
+        env
       );
 
       return jsonResponse({
