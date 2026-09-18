@@ -3,7 +3,9 @@
 
 const CFG = {
   maxSnapshotAgeMin: 35,
-  feePctPerSide: 0.25, // conservative placeholder; replace with actual account tier when known
+  makerFeePct: 0.15, // Bitvavo Category A tier 0 (EUR), current public fee schedule
+  takerFeePct: 0.25,
+  slippageBufferPct: 0.03
   minNetRR: 1.5,
   scoreB: 7.0,
   scoreA: 8.0,
@@ -82,7 +84,11 @@ function evaluate(market,x,btc,regime){
   if(stop && stop>=entry) stop=entry-1.5*A;
   const riskPct=stop?100*(entry-stop)/entry:null;
   const grossTarget=stop?entry+2*(entry-stop):null;
-  const roundTripCostPct=2*CFG.feePctPerSide + n(x.ticker.spreadPct||0);
+  // Execution-aware costs: structural pullbacks default maker entry; breakouts/momentum default taker entry.
+  const entryFeePct = family==="trend pullback" ? CFG.makerFeePct : CFG.takerFeePct;
+  // Protective exits are modeled as taker to avoid optimistic stop economics.
+  const exitFeePct = CFG.takerFeePct;
+  const roundTripCostPct=entryFeePct + exitFeePct + n(x.ticker.spreadPct||0) + CFG.slippageBufferPct;
   const netRewardPct=grossTarget?100*(grossTarget-entry)/entry-roundTripCostPct:null;
   const netRiskPct=riskPct!==null?riskPct+roundTripCostPct:null;
   const netRR=netRiskPct>0?netRewardPct/netRiskPct:null;
@@ -103,7 +109,7 @@ function analyze(snapshot){
   const btc=snapshot.deep["BTC-EUR"]; if(!btc) throw new Error("BTC-EUR missing");
   const regime=btcRegime(btc);
   const signals=Object.entries(snapshot.deep).map(([m,x])=>evaluate(m,x,btc,regime)).sort((a,b)=>b.score-a.score);
-  return {engineVersion:"0.1",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:new Date().toISOString(),
+  return {engineVersion:"0.2",snapshotVersion:snapshot.version,snapshotCollectedAt:snapshot.collectedAt,analyzedAt:new Date().toISOString(),
     btcRegime:regime,config:CFG,actionable:signals.filter(x=>x.action!=="WAIT"),signals};
 }
 
