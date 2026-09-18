@@ -5,7 +5,7 @@ const GITHUB_REPO = "bitvavo-market-data";
 const GITHUB_FILE = "snapshot.json";
 const GITHUB_BRANCH = "main";
 
-const MAX_DEEP_MARKETS = 12;
+const MAX_DEEP_MARKETS = 10;
 const MIN_VOLUME_QUOTE = 100000;
 const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 50;
