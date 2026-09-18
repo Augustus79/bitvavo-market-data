@@ -104,5 +104,6 @@ console.log(JSON.stringify({
   snapshotCollectedAt: result.snapshotCollectedAt,
   snapshotFresh: result.snapshotFresh,
   actionable: result.actionable.map((x) => x.market),
+  signalCount: result.signals.length,
   journal
 }, null, 2));
