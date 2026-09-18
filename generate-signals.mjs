@@ -1,3 +1,4 @@
+// deterministic signal generation entrypoint
 import fs from "node:fs";
 import { analyze } from "./analysis-engine.js";
 
