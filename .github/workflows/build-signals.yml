@@ -33,7 +33,7 @@ jobs:
 
       - name: Commit signals if changed
         run: |
-          if git diff --quiet -- signals.json; then
+          if [ -z "$(git status --porcelain -- signals.json)" ]; then
             echo "signals.json unchanged"
             exit 0
           fi
