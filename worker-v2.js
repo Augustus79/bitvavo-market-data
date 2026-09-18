@@ -5,7 +5,7 @@ const GITHUB_REPO = "bitvavo-market-data";
 const GITHUB_FILE = "snapshot.json";
 const GITHUB_BRANCH = "main";
 
-const MAX_DEEP_MARKETS = 10;
+const MAX_DEEP_MARKETS = 12;
 const MIN_VOLUME_QUOTE = 100000;
 const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 50;
@@ -27,7 +27,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.1"
+    "User-Agent": "bitvavo-collector/2.2"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -105,44 +105,51 @@ function selectDeepMarkets(universe) {
     t.spreadPct !== null &&
     t.spreadPct <= MAX_SPREAD_PCT &&
     t.last !== null &&
-    t.last > 0
+    t.last > 0 &&
+    t.change24hPct !== null
   );
 
-  const byMovement = [...tradable]
-    .sort((a, b) =>
-      Math.abs(b.change24hPct ?? 0) - Math.abs(a.change24hPct ?? 0)
-    )
-    .slice(0, 12);
-
   const byVolume = [...tradable]
-    .sort((a, b) => (b.volumeQuote ?? 0) - (a.volumeQuote ?? 0))
-    .slice(0, 12);
+    .sort((a, b) => (b.volumeQuote ?? 0) - (a.volumeQuote ?? 0));
 
-  const ordered = [];
+  const byMomentum = [...tradable]
+    .filter((t) => Math.abs(t.change24hPct) >= 2 && Math.abs(t.change24hPct) <= 35)
+    .sort((a, b) => {
+      const scoreA = Math.abs(a.change24hPct) * Math.log10(Math.max(a.volumeQuote, 1));
+      const scoreB = Math.abs(b.change24hPct) * Math.log10(Math.max(b.volumeQuote, 1));
+      return scoreB - scoreA;
+    });
 
-  for (const market of ["BTC-EUR", "ETH-EUR"]) {
-    if (tradable.some((t) => t.market === market)) {
-      ordered.push(market);
+  const byModerateMove = [...tradable]
+    .filter((t) => Math.abs(t.change24hPct) >= 1.5 && Math.abs(t.change24hPct) <= 15)
+    .sort((a, b) => {
+      const scoreA = Math.abs(a.change24hPct) * Math.sqrt(Math.max(a.volumeQuote, 1));
+      const scoreB = Math.abs(b.change24hPct) * Math.sqrt(Math.max(b.volumeQuote, 1));
+      return scoreB - scoreA;
+    });
+
+  const selected = [];
+  const add = (market) => {
+    if (market && !selected.includes(market) && selected.length < MAX_DEEP_MARKETS) {
+      selected.push(market);
     }
-  }
+  };
 
-  for (const ticker of byMovement) {
-    if (!ordered.includes(ticker.market)) {
-      ordered.push(ticker.market);
-    }
-  }
+  add("BTC-EUR");
+  add("ETH-EUR");
 
-  for (const ticker of byVolume) {
-    if (!ordered.includes(ticker.market)) {
-      ordered.push(ticker.market);
-    }
-  }
+  byVolume.slice(0, 5).forEach((t) => add(t.market));
+  byMomentum.slice(0, 4).forEach((t) => add(t.market));
+  byModerateMove.slice(0, 4).forEach((t) => add(t.market));
+
+  for (const t of byVolume) add(t.market);
 
   return {
     tradable,
-    selected: ordered.slice(0, MAX_DEEP_MARKETS),
-    topByMovement: byMovement.slice(0, 10).map((t) => t.market),
-    topByVolume: byVolume.slice(0, 10).map((t) => t.market)
+    selected: selected.slice(0, MAX_DEEP_MARKETS),
+    topByMomentum: byMomentum.slice(0, 10).map((t) => t.market),
+    topByVolume: byVolume.slice(0, 10).map((t) => t.market),
+    topByModerateMove: byModerateMove.slice(0, 10).map((t) => t.market)
   };
 }
 
@@ -204,7 +211,7 @@ async function collectSnapshot(env) {
 
   return {
     ok: true,
-    version: "2.1",
+    version: "2.2",
     source: "Bitvavo public REST API",
     collectedAt: new Date().toISOString(),
     config: {
@@ -221,7 +228,8 @@ async function collectSnapshot(env) {
     },
     selection: {
       deepMarkets: selection.selected,
-      topByMovement: selection.topByMovement,
+      topByMomentum: selection.topByMomentum,
+      topByModerateMove: selection.topByModerateMove,
       topByVolume: selection.topByVolume
     },
     universe,
@@ -252,7 +260,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.1"
+    "User-Agent": "bitvavo-collector/2.2"
   };
 
   let sha;
@@ -329,7 +337,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.1",
+          version: "2.2",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish"
