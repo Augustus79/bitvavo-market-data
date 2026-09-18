@@ -5,6 +5,7 @@ const GITHUB_REPO = "bitvavo-market-data";
 const GITHUB_FILE = "snapshot.json";
 const GITHUB_BRANCH = "main";
 const PRIVATE_ACCOUNT_FILE = "account-state.json";
+const PAPER_OPEN_MARKETS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/paper/open-markets.json";
 
 const MAX_DEEP_MARKETS = 9;
 const MIN_VOLUME_QUOTE = 100000;
@@ -97,7 +98,23 @@ function compactTicker(ticker) {
   };
 }
 
-function selectDeepMarkets(universe) {
+async function getPaperOpenMarkets() {
+  try {
+    const response = await fetch(PAPER_OPEN_MARKETS_URL, {
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.3" },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data?.markets)
+      ? data.markets.filter((m) => typeof m === "string" && m.endsWith("-EUR")).slice(0, 2)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function selectDeepMarkets(universe, forcedMarkets = []) {
   const tradable = universe.filter((t) =>
     t.market &&
     t.market.endsWith("-EUR") &&
@@ -138,6 +155,9 @@ function selectDeepMarkets(universe) {
 
   add("BTC-EUR");
   add("ETH-EUR");
+
+  const universeMarkets = new Set(universe.map((t) => t.market));
+  forcedMarkets.filter((m) => universeMarkets.has(m)).forEach(add);
 
   byVolume.slice(0, 5).forEach((t) => add(t.market));
   byMomentum.slice(0, 4).forEach((t) => add(t.market));
@@ -191,7 +211,8 @@ async function collectSnapshot(env) {
     .map(compactTicker)
     .sort((a, b) => (b.volumeQuote ?? 0) - (a.volumeQuote ?? 0));
 
-  const selection = selectDeepMarkets(universe);
+  const forcedPaperMarkets = await getPaperOpenMarkets();
+  const selection = selectDeepMarkets(universe, forcedPaperMarkets);
   const tickerMap = new Map(universe.map((t) => [t.market, t]));
 
   const deep = {};
@@ -229,6 +250,7 @@ async function collectSnapshot(env) {
     },
     selection: {
       deepMarkets: selection.selected,
+      forcedPaperMarkets,
       topByMomentum: selection.topByMomentum,
       topByModerateMove: selection.topByModerateMove,
       topByVolume: selection.topByVolume
