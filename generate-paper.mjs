@@ -16,8 +16,22 @@ if (signals.snapshotCollectedAt !== snapshot.collectedAt) {
 fs.mkdirSync("paper",{recursive:true});
 
 function readState(path, policy) {
-  if (fs.existsSync(path)) return JSON.parse(fs.readFileSync(path,"utf8"));
-  return newState(policy);
+  const base = newState(policy);
+  if (!fs.existsSync(path)) return base;
+  const raw = JSON.parse(fs.readFileSync(path,"utf8"));
+  return {
+    ...base,
+    ...raw,
+    version: base.version,
+    model: base.model,
+    policyId: policy.id,
+    openPositions: raw.openPositions || [],
+    pendingEntries: raw.pendingEntries || [],
+    lastDirectCandidateByMarket: raw.lastDirectCandidateByMarket ||
+      Object.fromEntries(Object.entries(raw.lastActionByMarket || {}).map(([m,a]) => [m, a === "BUY"])),
+    lastRetestCandidateByMarket: raw.lastRetestCandidateByMarket || {},
+    stats: { ...base.stats, ...(raw.stats || {}) }
+  };
 }
 
 function appendJsonl(path, rows) {
