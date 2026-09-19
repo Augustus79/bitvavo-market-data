@@ -1,3 +1,4 @@
+// workflow resilience verification
 // paper state generation entrypoint
 import fs from "node:fs";
 import { newState, processPaperState } from "./paper-trader.js";
