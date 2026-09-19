@@ -29,7 +29,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.4"
+    "User-Agent": "bitvavo-collector/2.5"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -101,13 +101,13 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.4" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.5" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
     const data = await response.json();
     return Array.isArray(data?.markets)
-      ? data.markets.filter((m) => typeof m === "string" && m.endsWith("-EUR")).slice(0, 2)
+      ? data.markets.filter((m) => typeof m === "string" && m.endsWith("-EUR")).slice(0, 6)
       : [];
   } catch {
     return [];
@@ -278,7 +278,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.4"
+    "User-Agent": "bitvavo-collector/2.5"
   };
 
   let sha;
@@ -407,7 +407,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.4"
+    "User-Agent": "bitvavo-collector/2.5"
   };
 
   let sha;
@@ -484,7 +484,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.4",
+          version: "2.5",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
