@@ -87,6 +87,12 @@ function migrateState(inputState, policy) {
   state.model = "paper-trading-v2";
   state.policyId = policy.id;
   state.openPositions ||= [];
+  state.openPositions = state.openPositions.map((p) => ({
+    ...p,
+    maxFavorablePrice: n(p.maxFavorablePrice) ?? n(p.entry),
+    minAdversePrice: n(p.minAdversePrice) ?? n(p.entry),
+    evaluatedFullBars: Number.isFinite(Number(p.evaluatedFullBars)) ? Number(p.evaluatedFullBars) : 0
+  }));
   state.pendingEntries ||= [];
   state.lastDirectCandidateByMarket ||= Object.fromEntries(
     Object.entries(state.lastActionByMarket || {}).map(([m, a]) => [m, a === "BUY"])
@@ -154,6 +160,19 @@ function closePosition(state, p, bar, reason, ambiguous, snapshotCollectedAt, ex
   const grossPct = ((bar.exitPrice - p.entry) / p.entry) * 100;
   const netPct = grossPct - p.roundTripCostPct;
   const pnlEur = p.amountEur * netPct / 100;
+
+  // Conservative excursion accounting with 5m candles:
+  // include completed non-exit bars in full; on the exit bar include only the
+  // known exit level, because the order of that candle's high/low is unknown.
+  let maxFavorablePrice = n(p.maxFavorablePrice) ?? p.entry;
+  let minAdversePrice = n(p.minAdversePrice) ?? p.entry;
+  if (reason === "TARGET") maxFavorablePrice = Math.max(maxFavorablePrice, bar.exitPrice);
+  if (reason === "STOP") minAdversePrice = Math.min(minAdversePrice, bar.exitPrice);
+  const mfePctGross = 100 * (maxFavorablePrice - p.entry) / p.entry;
+  const maePctGross = 100 * (p.entry - minAdversePrice) / p.entry;
+  const structuralRiskPct = 100 * (p.entry - p.stop) / p.entry;
+  const mfeStructuralR = structuralRiskPct > 0 ? mfePctGross / structuralRiskPct : null;
+  const maeStructuralR = structuralRiskPct > 0 ? maePctGross / structuralRiskPct : null;
   state.realizedNetPnlEur += pnlEur;
   state.realizedEquityEur = state.startingCapitalEur + state.realizedNetPnlEur;
   state.peakRealizedEquityEur = Math.max(state.peakRealizedEquityEur, state.realizedEquityEur);
@@ -190,6 +209,14 @@ function closePosition(state, p, bar, reason, ambiguous, snapshotCollectedAt, ex
     netPnlEur: pnlEur,
     initialNetRR: p.initialNetRR,
     btcRegimeAtEntry: p.btcRegimeAtEntry,
+    maxFavorablePrice,
+    minAdversePrice,
+    mfePctGross,
+    maePctGross,
+    mfeStructuralR,
+    maeStructuralR,
+    evaluatedFullBars: p.evaluatedFullBars ?? 0,
+    excursionMethod: "conservative 5m: full non-exit bars; exit level only on exit candle",
     ...extra
   };
 }
@@ -223,6 +250,9 @@ function makePosition(state, signal, entry, openedAt, lastClosedTs, entryMode, p
     roundTripCostPct: costs,
     initialNetRR,
     btcRegimeAtEntry: signal.btcRegime ?? null,
+    maxFavorablePrice: entry,
+    minAdversePrice: entry,
+    evaluatedFullBars: 0,
     lastEvaluatedCandleOpenTime: lastClosedTs
   };
 }
@@ -261,6 +291,9 @@ function processExits(state, snapshot, asOfMs, closedTrades) {
       const hitStop = b.low <= p.stop;
       const hitTarget = b.high >= p.target;
       if (!hitStop && !hitTarget) {
+        p.maxFavorablePrice = Math.max(n(p.maxFavorablePrice) ?? p.entry, b.high);
+        p.minAdversePrice = Math.min(n(p.minAdversePrice) ?? p.entry, b.low);
+        p.evaluatedFullBars = (p.evaluatedFullBars ?? 0) + 1;
         p.lastEvaluatedCandleOpenTime = b.ts;
         continue;
       }
