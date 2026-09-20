@@ -51,6 +51,12 @@ function summarize(state, trades) {
   const losses = trades.filter((t)=>t.netPnlEur<=0);
   const grossProfit = wins.reduce((s,t)=>s+t.netPnlEur,0);
   const grossLoss = Math.abs(losses.reduce((s,t)=>s+t.netPnlEur,0));
+  const excursionTrades = trades.filter((t)=>
+    Number.isFinite(Number(t.mfePctGross)) && Number.isFinite(Number(t.maePctGross))
+  );
+  const avg = (rows, key) => rows.length
+    ? rows.reduce((s,t)=>s+Number(t[key]),0)/rows.length
+    : null;
   return {
     closedTrades: trades.length,
     wins: wins.length,
@@ -60,6 +66,11 @@ function summarize(state, trades) {
     realizedEquityEur: state.realizedEquityEur,
     expectancyEurPerTrade: trades.length ? state.realizedNetPnlEur/trades.length : null,
     profitFactor: grossLoss>0 ? grossProfit/grossLoss : null,
+    excursionSampleSize: excursionTrades.length,
+    avgMfePctGross: avg(excursionTrades,"mfePctGross"),
+    avgMaePctGross: avg(excursionTrades,"maePctGross"),
+    avgMfeStructuralR: avg(excursionTrades.filter((t)=>Number.isFinite(Number(t.mfeStructuralR))),"mfeStructuralR"),
+    avgMaeStructuralR: avg(excursionTrades.filter((t)=>Number.isFinite(Number(t.maeStructuralR))),"maeStructuralR"),
     maxRealizedDrawdownEur: state.maxRealizedDrawdownEur,
     maxRealizedDrawdownPct: state.maxRealizedDrawdownPct,
     openPositions: state.openPositions.length,
