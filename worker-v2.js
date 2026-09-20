@@ -38,7 +38,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.6"
+    "User-Agent": "bitvavo-collector/2.7"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -110,7 +110,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.6" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.7" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -287,7 +287,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.6"
+    "User-Agent": "bitvavo-collector/2.7"
   };
 
   let sha;
@@ -339,7 +339,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.6"
+      "User-Agent": "bitvavo-collector/2.7"
     }
   });
   if (response.status === 404) return null;
@@ -443,7 +443,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.6"
+    "User-Agent": "bitvavo-collector/2.7"
   };
 
   let sha;
@@ -499,7 +499,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.6" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.7" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -808,7 +808,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.6",
+          version: "2.7",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -849,7 +849,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.6 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.7 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
@@ -923,10 +923,22 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    const publicJob = buildAndPublish(env).catch((error) => {
-      console.error("Scheduled public snapshot failed:", error);
-    });
-    ctx.waitUntil(publicJob);
+    // Snapshot collection and alert checking deliberately run independently:
+    // alert checking uses the latest fully-generated signals.json from the
+    // previous GitHub Actions cycle, avoiding half-built/current snapshots.
+    ctx.waitUntil(
+      buildAndPublish(env).catch((error) => {
+        console.error("Scheduled public snapshot failed:", error);
+      })
+    );
+
+    if (env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID) {
+      ctx.waitUntil(
+        checkAndNotifyStrictSignals(env).catch((error) => {
+          console.error("Scheduled strict Telegram alert check failed:", error);
+        })
+      );
+    }
 
     const scheduledAt = new Date(event.scheduledTime || Date.now());
     const shouldSyncPrivate = scheduledAt.getUTCMinutes() % 15 === 0;
