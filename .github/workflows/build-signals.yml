@@ -54,6 +54,12 @@ jobs:
 
             if [ -z "$(git status --porcelain -- signals.json history paper)" ]; then
               echo "signals.json, history and paper state already current"
+              if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
+                curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 30 \
+                  -X POST \
+                  -H "X-Alert-Key: ${{ secrets.ALERT_TRIGGER_KEY }}" \
+                  "https://bitvavo-collector.nicolasbonnin79.workers.dev/alert-check" || true
+              fi
               exit 0
             fi
 
@@ -61,6 +67,16 @@ jobs:
             git commit -m "Update signals, journal and paper trading state"
 
             if git push origin HEAD:main; then
+              echo "Triggering real-time strict alert check"
+              if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
+                curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+                  -X POST \
+                  -H "X-Alert-Key: ${{ secrets.ALERT_TRIGGER_KEY }}" \
+                  "https://bitvavo-collector.nicolasbonnin79.workers.dev/alert-check" || \
+                  echo "::warning::Real-time alert check failed; ChatGPT hourly scan remains fallback."
+              else
+                echo "::warning::ALERT_TRIGGER_KEY secret not configured; real-time alert check skipped."
+              fi
               exit 0
             fi
 
