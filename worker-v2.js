@@ -820,7 +820,8 @@ export default {
           recommendedCron: "*/5 * * * *",
           privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN),
           privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY),
-          realtimeAlertsConfigured: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID && env?.ALERT_TRIGGER_KEY)
+          telegramAlertsConfigured: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID),
+          manualAlertCheckConfigured: Boolean(env?.ALERT_TRIGGER_KEY)
         });
       }
 
