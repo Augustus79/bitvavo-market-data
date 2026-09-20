@@ -6,6 +6,15 @@ const GITHUB_FILE = "snapshot.json";
 const GITHUB_BRANCH = "main";
 const PRIVATE_ACCOUNT_FILE = "account-state.json";
 const PAPER_OPEN_MARKETS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/paper/open-markets.json";
+const SIGNALS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/signals.json";
+const LIVE_ALERT_STATE_FILE = "live-alert-state.json";
+const ALERT_SIGNAL_MAX_AGE_MIN = 8;
+const ALERT_RESERVATION_MIN = 20;
+const MAX_LIVE_POSITIONS = 2;
+const MAX_COMBINED_LIVE_RISK_EUR = 3;
+const DEFAULT_MAKER_FEE_PCT = 0.15;
+const DEFAULT_TAKER_FEE_PCT = 0.25;
+const SLIPPAGE_BUFFER_PCT = 0.03;
 
 const MAX_DEEP_MARKETS = 9;
 const MIN_VOLUME_QUOTE = 100000;
@@ -29,7 +38,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.5"
+    "User-Agent": "bitvavo-collector/2.6"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -101,7 +110,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.5" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.6" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -278,7 +287,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.5"
+    "User-Agent": "bitvavo-collector/2.6"
   };
 
   let sha;
@@ -313,6 +322,33 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     sha: result.content?.sha,
     commit: result.commit?.sha
   };
+}
+
+function base64ToUtf8(base64) {
+  const clean = String(base64 || "").replace(/\n/g, "");
+  const binary = atob(clean);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
+  if (!token) return null;
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+  const response = await fetch(apiUrl, {
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "bitvavo-collector/2.6"
+    }
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub private read ${response.status}: ${text.slice(0, 400)}`);
+  }
+  const data = await response.json();
+  return JSON.parse(base64ToUtf8(data.content));
 }
 
 function parsePrivateRepo(value) {
@@ -407,7 +443,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.5"
+    "User-Agent": "bitvavo-collector/2.6"
   };
 
   let sha;
@@ -461,6 +497,294 @@ async function publishToGitHub(snapshot, token) {
   };
 }
 
+async function fetchLatestSignals() {
+  const response = await fetch(SIGNALS_URL, {
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.6" },
+    cf: { cacheTtl: 0, cacheEverything: false }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`signals.json fetch ${response.status}: ${text.slice(0, 300)}`);
+  }
+  return response.json();
+}
+
+function emptyLiveAlertState() {
+  return {
+    version: "1.0",
+    updatedAt: null,
+    notifiedKeys: [],
+    pendingRecommendations: [],
+    activePositions: []
+  };
+}
+
+function heldSymbols(account) {
+  return new Set((account?.balances || [])
+    .filter((b) => b.symbol !== "EUR" && ((b.available || 0) > 0 || (b.inOrder || 0) > 0))
+    .map((b) => b.symbol));
+}
+
+function reconcileLiveAlertState(rawState, account, nowMs) {
+  const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
+  state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
+  state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
+  state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
+
+  const held = heldSymbols(account);
+  const activeByMarket = new Map();
+  for (const p of state.activePositions) {
+    const symbol = String(p.market || "").replace(/-EUR$/, "");
+    if (held.has(symbol)) activeByMarket.set(p.market, p);
+  }
+
+  const pending = [];
+  for (const p of state.pendingRecommendations) {
+    const symbol = String(p.market || "").replace(/-EUR$/, "");
+    if (held.has(symbol)) {
+      if (!activeByMarket.has(p.market)) {
+        activeByMarket.set(p.market, {
+          ...p,
+          activatedAt: new Date(nowMs).toISOString(),
+          status: "active"
+        });
+      }
+    } else if (Number(p.expiresAtMs) > nowMs) {
+      pending.push(p);
+    }
+  }
+
+  state.pendingRecommendations = pending;
+  state.activePositions = [...activeByMarket.values()];
+  state.updatedAt = new Date(nowMs).toISOString();
+
+  const knownSymbols = new Set(state.activePositions.map((p) => String(p.market).replace(/-EUR$/, "")));
+  const unknownHeldSymbols = [...held].filter((s) => !knownSymbols.has(s));
+  return { state, unknownHeldSymbols };
+}
+
+function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapitalEur) {
+  const entry = num(ticker?.ask);
+  const stop = num(signal?.stop);
+  const target = num(signal?.target);
+  const spreadPct = num(ticker?.spreadPct);
+  if (!(entry > 0 && stop > 0 && stop < entry && target > entry && spreadPct !== null)) return null;
+
+  const maker = num(account?.fees?.makerPct) ?? DEFAULT_MAKER_FEE_PCT;
+  const taker = num(account?.fees?.takerPct) ?? DEFAULT_TAKER_FEE_PCT;
+  const entryFeePct = signal?.family === "trend pullback" ? maker : taker;
+  const roundTripCostPct = entryFeePct + taker + spreadPct + SLIPPAGE_BUFFER_PCT;
+
+  const structuralRiskPct = 100 * (entry - stop) / entry;
+  const grossRewardPct = 100 * (target - entry) / entry;
+  const netRiskPct = structuralRiskPct + roundTripCostPct;
+  const netRewardPct = grossRewardPct - roundTripCostPct;
+  const netRR = netRiskPct > 0 && netRewardPct > 0 ? netRewardPct / netRiskPct : null;
+  if (!(netRR >= 1.5)) return null;
+
+  const riskBudget = num(signal?.suggestedRiskEur);
+  const remainingRisk = Math.max(0, MAX_COMBINED_LIVE_RISK_EUR - reservedRiskEur);
+  const riskEur = Math.min(riskBudget || 0, remainingRisk);
+  if (!(riskEur > 0)) return null;
+
+  const eurBalance = (account?.balances || []).find((b) => b.symbol === "EUR");
+  const availableEur = Math.max(0, (num(eurBalance?.available) || 0) - reservedCapitalEur);
+  const amountEur = Math.min(availableEur, riskEur / (netRiskPct / 100));
+  if (!(amountEur > 0)) return null;
+
+  return {
+    entry,
+    stop,
+    target,
+    spreadPct,
+    roundTripCostPct,
+    structuralRiskPct,
+    grossRewardPct,
+    netRiskPct,
+    netRewardPct,
+    netRR,
+    riskEur: amountEur * netRiskPct / 100,
+    amountEur,
+    quantity: amountEur / entry
+  };
+}
+
+function fmt(value, digits = 6) {
+  const x = Number(value);
+  return Number.isFinite(x) ? x.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "") : "n/a";
+}
+
+function telegramMessage(signal, live, signalsDoc) {
+  return [
+    "🚨 BITVAVO STRICT BUY",
+    `${signal.market} | Grade ${signal.tradeGrade} | ${signal.family}`,
+    `BTC regime: ${signalsDoc.btcRegime}`,
+    "",
+    `Entrée live: €${fmt(live.entry)}`,
+    `Montant: €${fmt(live.amountEur, 2)}`,
+    `Quantité: ${fmt(live.quantity, 8)}`,
+    `Stop structurel: €${fmt(live.stop)}`,
+    `Risque max estimé: €${fmt(live.riskEur, 2)}`,
+    `Cible: €${fmt(live.target)}`,
+    `R/R net live: ${fmt(live.netRR, 2)}`,
+    `Coûts A/R estimés: ${fmt(live.roundTripCostPct, 2)}%`,
+    "",
+    "ACTION: vérifier le prix dans Bitvavo Pro puis placer manuellement le trade spot si les niveaux restent comparables. Aucun ordre n'est exécuté automatiquement."
+  ].join("\n");
+}
+
+async function sendTelegram(env, text) {
+  if (!env?.TELEGRAM_BOT_TOKEN || !env?.TELEGRAM_CHAT_ID) {
+    return { ok: false, skipped: true, reason: "Telegram not configured" };
+  }
+  const response = await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: env.TELEGRAM_CHAT_ID,
+        text,
+        disable_web_page_preview: true
+      })
+    }
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body?.ok === false) {
+    throw new Error(`Telegram send failed: ${JSON.stringify(body).slice(0, 400)}`);
+  }
+  return { ok: true, messageId: body?.result?.message_id ?? null };
+}
+
+async function checkAndNotifyStrictSignals(env) {
+  const privateTarget = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!privateTarget || !env?.PRIVATE_GITHUB_TOKEN) {
+    return { ok: false, skipped: true, reason: "private GitHub target not configured" };
+  }
+
+  const signalsDoc = await fetchLatestSignals();
+  const snapshotMs = Date.parse(signalsDoc?.snapshotCollectedAt);
+  const nowMs = Date.now();
+  const ageMin = Number.isFinite(snapshotMs) ? (nowMs - snapshotMs) / 60000 : Infinity;
+  if (!signalsDoc?.snapshotFresh || ageMin < 0 || ageMin > ALERT_SIGNAL_MAX_AGE_MIN) {
+    return { ok: true, notified: [], skipped: true, reason: "signal snapshot not live", ageMin };
+  }
+
+  const account = await collectPrivateAccountState(env);
+  const rawState = await readJsonFromRepo({
+    owner: privateTarget.owner,
+    repo: privateTarget.repo,
+    path: LIVE_ALERT_STATE_FILE,
+    branch: "main",
+    token: env.PRIVATE_GITHUB_TOKEN
+  });
+  const reconciled = reconcileLiveAlertState(rawState, account, nowMs);
+  const state = reconciled.state;
+
+  const activeMarkets = new Set(state.activePositions.map((p) => p.market));
+  const pendingMarkets = new Set(state.pendingRecommendations.map((p) => p.market));
+  const activeRisk = state.activePositions.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
+  let pendingRisk = state.pendingRecommendations.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
+  let pendingCapital = state.pendingRecommendations.reduce((s, p) => s + (num(p.amountEur) || 0), 0);
+
+  const managedOpenMarkets = new Set(state.activePositions.map((p) => p.market));
+  const unmanagedOrders = (account.openOrders || []).filter((o) =>
+    !(o.side === "sell" && managedOpenMarkets.has(o.market))
+  );
+
+  const notified = [];
+  const blocked = [];
+  const candidates = Array.isArray(signalsDoc?.actionable)
+    ? [...signalsDoc.actionable].sort((a, b) =>
+        (b.tradeGrade === "A" ? 1 : 0) - (a.tradeGrade === "A" ? 1 : 0) ||
+        (Number(b.score) || 0) - (Number(a.score) || 0)
+      )
+    : [];
+
+  for (const signal of candidates) {
+    const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
+    if (state.notifiedKeys.includes(key)) continue;
+    if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
+
+    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + reconciled.unknownHeldSymbols.length;
+    const reservedRisk = activeRisk + pendingRisk;
+    if (reservedSlots >= MAX_LIVE_POSITIONS) {
+      blocked.push({ market: signal.market, reason: "max live positions/reservations reached" });
+      continue;
+    }
+    if (reconciled.unknownHeldSymbols.length) {
+      blocked.push({ market: signal.market, reason: "unmanaged non-EUR holdings present" });
+      continue;
+    }
+    if (unmanagedOrders.length) {
+      blocked.push({ market: signal.market, reason: "unmanaged open orders present" });
+      continue;
+    }
+
+    const t = await getJson(`${BITVAVO}/ticker/24h?market=${signal.market}`, env);
+    const ticker = compactTicker(Array.isArray(t) ? t[0] : t);
+    const live = calcLiveTrade(signal, ticker, account, reservedRisk, pendingCapital);
+    if (!live) {
+      blocked.push({ market: signal.market, reason: "live price no longer satisfies strict R/R/risk gates" });
+      continue;
+    }
+
+    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc));
+    if (!telegram.ok) {
+      blocked.push({ market: signal.market, reason: telegram.reason || "Telegram not configured" });
+      continue;
+    }
+
+    const reservation = {
+      key,
+      market: signal.market,
+      signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+      notifiedAt: new Date(nowMs).toISOString(),
+      expiresAtMs: nowMs + ALERT_RESERVATION_MIN * 60000,
+      family: signal.family,
+      tradeGrade: signal.tradeGrade,
+      score: signal.score,
+      entry: live.entry,
+      stop: live.stop,
+      target: live.target,
+      amountEur: live.amountEur,
+      quantity: live.quantity,
+      plannedRiskEur: live.riskEur,
+      liveNetRR: live.netRR,
+      telegramMessageId: telegram.messageId,
+      status: "pending"
+    };
+    state.pendingRecommendations.push(reservation);
+    pendingMarkets.add(signal.market);
+    pendingRisk += reservation.plannedRiskEur;
+    pendingCapital += reservation.amountEur;
+    state.notifiedKeys.push(key);
+    notified.push({ market: signal.market, key, liveNetRR: live.netRR });
+  }
+
+  state.notifiedKeys = state.notifiedKeys.slice(-200);
+  state.updatedAt = new Date().toISOString();
+  await publishJsonToRepo({
+    owner: privateTarget.owner,
+    repo: privateTarget.repo,
+    path: LIVE_ALERT_STATE_FILE,
+    branch: "main",
+    data: state,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: "Update live Bitvavo alert state"
+  });
+
+  return {
+    ok: true,
+    signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+    ageMin: Number(ageMin.toFixed(2)),
+    notified,
+    blocked,
+    activePositions: state.activePositions.map((p) => p.market),
+    pendingRecommendations: state.pendingRecommendations.map((p) => p.market)
+  };
+}
+
 async function buildAndPublish(env) {
   const snapshot = await collectSnapshot(env);
   const github = await publishToGitHub(snapshot, env.GITHUB_TOKEN);
@@ -484,16 +808,48 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.5",
+          version: "2.6",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
-            privateSync: "/sync-private (POST, X-Private-Sync-Key required)"
+            privateSync: "/sync-private (POST, X-Private-Sync-Key required)",
+            alertCheck: "/alert-check (POST, X-Alert-Key required)",
+            telegramTest: "/telegram-test (POST, X-Private-Sync-Key required)"
           },
           scheduledHandler: true,
+          recommendedCron: "*/5 * * * *",
           privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN),
-          privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY)
+          privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY),
+          realtimeAlertsConfigured: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID && env?.ALERT_TRIGGER_KEY)
         });
+      }
+
+      if (url.pathname === "/alert-check") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "ALERT_TRIGGER_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Alert-Key");
+        if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await checkAndNotifyStrictSignals(env));
+      }
+
+      if (url.pathname === "/telegram-test") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.PRIVATE_SYNC_KEY) {
+          return jsonResponse({ ok: false, error: "PRIVATE_SYNC_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Private-Sync-Key");
+        if (!supplied || supplied !== env.PRIVATE_SYNC_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.6 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
@@ -573,7 +929,7 @@ export default {
     ctx.waitUntil(publicJob);
 
     const scheduledAt = new Date(event.scheduledTime || Date.now());
-    const shouldSyncPrivate = scheduledAt.getUTCMinutes() === 0;
+    const shouldSyncPrivate = scheduledAt.getUTCMinutes() % 15 === 0;
     if (shouldSyncPrivate && env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN) {
       ctx.waitUntil(
         publishPrivateAccountState(env).catch((error) => {
