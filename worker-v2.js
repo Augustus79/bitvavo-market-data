@@ -814,7 +814,7 @@ export default {
             publish: "/publish",
             privateSync: "/sync-private (POST, X-Private-Sync-Key required)",
             alertCheck: "/alert-check (POST, X-Alert-Key required)",
-            telegramTest: "/telegram-test (POST, X-Private-Sync-Key required)"
+            telegramTest: "/telegram-test (POST, X-Alert-Key required)"
           },
           scheduledHandler: true,
           recommendedCron: "*/5 * * * *",
@@ -842,11 +842,11 @@ export default {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
         }
-        if (!env?.PRIVATE_SYNC_KEY) {
-          return jsonResponse({ ok: false, error: "PRIVATE_SYNC_KEY not configured" }, 503);
+        if (!env?.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "ALERT_TRIGGER_KEY not configured" }, 503);
         }
-        const supplied = request.headers.get("X-Private-Sync-Key");
-        if (!supplied || supplied !== env.PRIVATE_SYNC_KEY) {
+        const supplied = request.headers.get("X-Alert-Key");
+        if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
         return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.6 opérationnel."));
