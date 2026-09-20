@@ -43,6 +43,9 @@ r=processPaperState(r.state,{signals:[{...buy,action:"WAIT"}],actionable:[]},sna
 assert.equal(r.state.openPositions.length,0);
 assert.equal(r.closedTrades[0].exitReason,"TARGET");
 assert.ok(r.closedTrades[0].netPnlEur>0);
+assert.equal(Number(r.closedTrades[0].mfePctGross.toFixed(6)),4);
+assert.equal(Number(r.closedTrades[0].maePctGross.toFixed(6)),1);
+assert.equal(r.closedTrades[0].evaluatedFullBars,1);
 
 let s=newState(STRICT_POLICY);
 const b2={...buy,market:"BBB-EUR"};
@@ -54,6 +57,8 @@ snapshot={collectedAt:"2026-09-18T10:15:00Z",deep:{"BBB-EUR":{candles:{"5m":[
 r=processPaperState(r.state,{signals:[{...b2,action:"WAIT"}],actionable:[]},snapshot,STRICT_POLICY);
 assert.equal(r.closedTrades[0].exitReason,"STOP");
 assert.equal(r.closedTrades[0].ambiguousSameCandle,true);
+assert.equal(Number(r.closedTrades[0].mfePctGross.toFixed(6)),0);
+assert.equal(Number(r.closedTrades[0].maePctGross.toFixed(6)),2);
 
 const oppDirect={
   ...buy, market:"CCC-EUR", action:"WAIT", netRR:1.30, suggestedAmountEur:null,
