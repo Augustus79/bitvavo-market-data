@@ -38,7 +38,7 @@ async function getJson(url, env) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.8"
+    "User-Agent": "bitvavo-collector/2.9"
   };
 
   if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
@@ -110,7 +110,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.8" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.9" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -287,7 +287,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.8"
+    "User-Agent": "bitvavo-collector/2.9"
   };
 
   let sha;
@@ -339,7 +339,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.8"
+      "User-Agent": "bitvavo-collector/2.9"
     }
   });
   if (response.status === 404) return null;
@@ -443,7 +443,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.8"
+    "User-Agent": "bitvavo-collector/2.9"
   };
 
   let sha;
@@ -499,7 +499,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.8" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.9" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -633,6 +633,22 @@ function telegramMessage(signal, live, signalsDoc) {
   ].join("\n");
 }
 
+function telegramCancellationMessage(pending, latestSignal) {
+  const state = latestSignal?.setupState || latestSignal?.action || "non actionable";
+  const blockers = Array.isArray(latestSignal?.blockers) && latestSignal.blockers.length
+    ? latestSignal.blockers.join("; ")
+    : "le signal n'est plus présent parmi les BUY stricts du dernier snapshot";
+
+  return [
+    "❌ BITVAVO SIGNAL ANNULÉ",
+    `${pending.market} | ancienne recommandation BUY`,
+    `État actuel: ${state}`,
+    `Raison: ${blockers}`,
+    "",
+    "ACTION: NE PAS ENTRER si l'ordre n'a pas encore été exécuté. La recommandation précédente n'est plus valide."
+  ].join("\n");
+}
+
 async function sendTelegram(env, text) {
   if (!env?.TELEGRAM_BOT_TOKEN || !env?.TELEGRAM_CHAT_ID) {
     return { ok: false, skipped: true, reason: "Telegram not configured" };
@@ -700,6 +716,54 @@ async function checkAndNotifyStrictSignals(env) {
         (Number(b.score) || 0) - (Number(a.score) || 0)
       )
     : [];
+
+  // A BUY alert is only valid while the latest deterministic snapshot still
+  // classifies that market as actionable. If the user has not entered yet and
+  // the setup disappears/downgrades, cancel the reservation and notify them.
+  const actionableMarkets = new Set(candidates.map((s) => s.market));
+  const latestSignalsByMarket = new Map(
+    (Array.isArray(signalsDoc?.signals) ? signalsDoc.signals : [])
+      .map((s) => [s.market, s])
+  );
+  const stillPending = [];
+  for (const p of state.pendingRecommendations) {
+    if (actionableMarkets.has(p.market)) {
+      stillPending.push(p);
+      continue;
+    }
+
+    const latestSignal = latestSignalsByMarket.get(p.market) || null;
+    try {
+      const telegram = await sendTelegram(
+        env,
+        telegramCancellationMessage(p, latestSignal)
+      );
+      if (!telegram.ok) {
+        blocked.push({
+          market: p.market,
+          reason: telegram.reason || "Telegram cancellation not sent"
+        });
+        stillPending.push(p);
+        continue;
+      }
+    } catch (error) {
+      console.error("Telegram cancellation failed:", error);
+      blocked.push({ market: p.market, reason: "Telegram cancellation failed" });
+      stillPending.push(p);
+      continue;
+    }
+
+    pendingRisk = Math.max(0, pendingRisk - (num(p.plannedRiskEur) || 0));
+    pendingCapital = Math.max(0, pendingCapital - (num(p.amountEur) || 0));
+    pendingMarkets.delete(p.market);
+    notified.push({
+      market: p.market,
+      key: p.key,
+      action: "CANCEL",
+      reason: latestSignal?.blockers || ["no longer actionable"]
+    });
+  }
+  state.pendingRecommendations = stillPending;
 
   for (const signal of candidates) {
     const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
@@ -808,7 +872,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.8",
+          version: "2.9",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -854,7 +918,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.8 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.9 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
