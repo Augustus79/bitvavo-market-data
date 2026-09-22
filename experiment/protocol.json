@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "registeredAt": "2026-09-22",
+  "purpose": "Prospective validation of the current strict strategy without tuning on short-run outcomes.",
+  "frozenModel": {
+    "engineVersion": "0.6",
+    "paperModel": "paper-trading-v2",
+    "analysisEngineGitBlobSha": "2e00019663dad2b80048b764567e6e708f37efc7",
+    "paperTraderGitBlobSha": "b5e2d5673f4591d0d5f330e4a753e05e78ac7365",
+    "strictPolicy": {
+      "minDirectNetRR": 1.5,
+      "enableRetest": false,
+      "retestTargetNetRR": 1.5,
+      "retestMaxAtr15": 0.75,
+      "pendingBars": 6
+    }
+  },
+  "primaryHypothesis": {
+    "metric": "meanNetRPerClosedStrictTrade",
+    "definition": "netPnlEur / plannedRiskEur for each closed strict paper trade, after modeled exchange costs",
+    "firstDecisionCheckpointTrades": 50,
+    "supportCheckpointTrades": 100,
+    "falsificationRule": "At n >= 50, if the upper bound of the approximate 95% CI for mean net R is <= 0, the frozen strategy is falsified.",
+    "supportRule": "At n >= 100, if the lower bound of the approximate 95% CI for mean net R is > 0, the frozen strategy has prospective evidence of positive expectancy.",
+    "otherwise": "INCONCLUSIVE"
+  },
+  "aiShadowHypothesis": {
+    "mode": "shadow-only",
+    "rule": "AI never changes live signal validity during this protocol.",
+    "measurement": "Compare closed strict paper-trade outcomes by AI verdict and the counterfactual PnL if MATERIAL_RISK_FOUND reviews had been skipped, including all measured AI API costs.",
+    "minimumReviewedClosedTradesBeforeInterpretation": 30
+  },
+  "stabilityCriteria": {
+    "snapshotIntervalSec": 300,
+    "minimumObservationWindowHours": 6,
+    "minimumCoveragePct": 95,
+    "maximumP95PipelineLatencySec": 120,
+    "maximumStaleRuns": 0
+  },
+  "riskReviewThresholds": {
+    "maxRealizedDrawdownPctForReview": 10,
+    "note": "Crossing this threshold triggers review; it does not automatically alter or stop the strategy."
+  },
+  "changeControl": {
+    "rule": "Any change to the locked analysis-engine.js or paper-trader.js blob without registering a new protocol version sets evaluation status to PROTOCOL_CHANGED.",
+    "noOutcomeDrivenTuningBeforeCheckpoint": true
+  }
+}
