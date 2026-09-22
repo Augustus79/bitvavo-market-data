@@ -89,6 +89,7 @@ function migrateState(inputState, policy) {
   state.openPositions ||= [];
   state.openPositions = state.openPositions.map((p) => ({
     ...p,
+    signalSnapshotAt: p.signalSnapshotAt ?? p.openedAt ?? null,
     maxFavorablePrice: n(p.maxFavorablePrice) ?? n(p.entry),
     minAdversePrice: n(p.minAdversePrice) ?? n(p.entry),
     evaluatedFullBars: Number.isFinite(Number(p.evaluatedFullBars)) ? Number(p.evaluatedFullBars) : 0
@@ -192,6 +193,7 @@ function closePosition(state, p, bar, reason, ambiguous, snapshotCollectedAt, ex
     tradeGrade: p.tradeGrade,
     entryMode: p.entryMode,
     openedAt: p.openedAt,
+    signalSnapshotAt: p.signalSnapshotAt ?? p.openedAt ?? null,
     closedAt: new Date(bar.ts + CFG.candleMs).toISOString(),
     processedAtSnapshot: snapshotCollectedAt,
     entry: p.entry,
@@ -221,7 +223,7 @@ function closePosition(state, p, bar, reason, ambiguous, snapshotCollectedAt, ex
   };
 }
 
-function makePosition(state, signal, entry, openedAt, lastClosedTs, entryMode, policy) {
+function makePosition(state, signal, entry, openedAt, lastClosedTs, entryMode, policy, signalSnapshotAt = openedAt) {
   const stop = n(signal.stop);
   const target = n(signal.target);
   const costs = n(signal.roundTripCostPct);
@@ -240,6 +242,7 @@ function makePosition(state, signal, entry, openedAt, lastClosedTs, entryMode, p
     tradeGrade: signal.tradeGrade,
     score: signal.score,
     openedAt,
+    signalSnapshotAt,
     entryMode,
     entry,
     stop,
@@ -369,7 +372,8 @@ function processPending(state, signalsDoc, snapshot, asOfMs, closedTrades, skipp
           new Date(b.ts + CFG.candleMs).toISOString(),
           b.ts,
           "retest-limit",
-          policy
+          policy,
+          p.createdAt
         );
 
         if (!position) {
@@ -481,7 +485,7 @@ function processPaperState(inputState, signalsDoc, snapshot, policy = STRICT_POL
       const closed = closed5mBars(snapshot?.deep?.[s.market]?.candles?.["5m"], asOfMs);
       const lastClosedTs = closed.length ? closed[closed.length - 1].ts : null;
       const position = reasons.length ? null : makePosition(
-        state, s, entry, snapshot.collectedAt, lastClosedTs, "signal", policy
+        state, s, entry, snapshot.collectedAt, lastClosedTs, "signal", policy, snapshot.collectedAt
       );
       if (!position && reasons.length === 0) reasons.push("invalid sizing or structure");
 

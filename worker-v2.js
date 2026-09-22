@@ -50,7 +50,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.12"
+    "User-Agent": "bitvavo-collector/2.13"
   };
 
   if (auth) {
@@ -125,7 +125,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.13" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -303,7 +303,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.12"
+    "User-Agent": "bitvavo-collector/2.13"
   };
 
   let sha;
@@ -355,7 +355,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.12"
+      "User-Agent": "bitvavo-collector/2.13"
     }
   });
   if (response.status === 404) return null;
@@ -459,7 +459,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.12"
+    "User-Agent": "bitvavo-collector/2.13"
   };
 
   let sha;
@@ -515,7 +515,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.13" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -527,7 +527,7 @@ async function fetchLatestSignals() {
 
 async function fetchLatestAiReview() {
   const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.13" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -540,11 +540,12 @@ async function fetchLatestAiReview() {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.0",
+    version: "1.1",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
-    activePositions: []
+    activePositions: [],
+    notificationHistory: []
   };
 }
 
@@ -559,6 +560,7 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
+  state.notificationHistory = Array.isArray(state.notificationHistory) ? state.notificationHistory.slice(-200) : [];
 
   const held = heldSymbols(account);
   const activeByMarket = new Map();
@@ -575,6 +577,12 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
         activeByMarket.set(p.market, {
           ...p,
           activatedAt: new Date(nowMs).toISOString(),
+          signalToExecutionDetectedSec: Number.isFinite(Date.parse(p.signalSnapshotAt))
+            ? Number(((nowMs - Date.parse(p.signalSnapshotAt)) / 1000).toFixed(2))
+            : null,
+          notificationToExecutionDetectedSec: Number.isFinite(Date.parse(p.notifiedAt))
+            ? Number(((nowMs - Date.parse(p.notifiedAt)) / 1000).toFixed(2))
+            : null,
           status: "active"
         });
       }
@@ -893,11 +901,20 @@ async function checkAndNotifyStrictSignals(env) {
       continue;
     }
 
+    const sentAtMs = Date.now();
+    const aiReview = aiReviewDoc?.snapshotCollectedAt === signalsDoc.snapshotCollectedAt
+      ? (aiReviewDoc.reviews || []).find((r) => r.market === signal.market) || null
+      : null;
+    const snapshotToNotificationSec = Number.isFinite(snapshotMs)
+      ? Number(((sentAtMs - snapshotMs) / 1000).toFixed(2))
+      : null;
+
     const reservation = {
       key,
       market: signal.market,
       signalSnapshotAt: signalsDoc.snapshotCollectedAt,
-      notifiedAt: new Date(nowMs).toISOString(),
+      notifiedAt: new Date(sentAtMs).toISOString(),
+      snapshotToNotificationSec,
       expiresAtMs: nowMs + ALERT_RESERVATION_MIN * 60000,
       family: signal.family,
       tradeGrade: signal.tradeGrade,
@@ -910,14 +927,37 @@ async function checkAndNotifyStrictSignals(env) {
       plannedRiskEur: live.riskEur,
       liveNetRR: live.netRR,
       telegramMessageId: telegram.messageId,
+      aiShadowStatus: aiReview?.status ?? "unavailable",
+      aiShadowVerdict: aiReview?.verdict ?? null,
+      aiShadowCostEur: num(aiReview?.cost?.estimatedCostEur),
+      aiShadowReviewedAt: aiReview?.reviewedAt ?? null,
       status: "pending"
     };
     state.pendingRecommendations.push(reservation);
+    state.notificationHistory.push({
+      key,
+      market: signal.market,
+      signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+      notifiedAt: reservation.notifiedAt,
+      snapshotToNotificationSec,
+      liveNetRR: live.netRR,
+      aiShadowStatus: reservation.aiShadowStatus,
+      aiShadowVerdict: reservation.aiShadowVerdict,
+      aiShadowCostEur: reservation.aiShadowCostEur
+    });
+    state.notificationHistory = state.notificationHistory.slice(-200);
     pendingMarkets.add(signal.market);
     pendingRisk += reservation.plannedRiskEur;
     pendingCapital += reservation.amountEur;
     state.notifiedKeys.push(key);
-    notified.push({ market: signal.market, key, liveNetRR: live.netRR });
+    notified.push({
+      market: signal.market,
+      key,
+      liveNetRR: live.netRR,
+      snapshotToNotificationSec,
+      aiShadowStatus: reservation.aiShadowStatus,
+      aiShadowVerdict: reservation.aiShadowVerdict
+    });
   }
 
   state.notifiedKeys = state.notifiedKeys.slice(-200);
@@ -966,7 +1006,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.12",
+          version: "2.13",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -1012,7 +1052,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.12 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.13 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
