@@ -7,6 +7,7 @@ const GITHUB_BRANCH = "main";
 const PRIVATE_ACCOUNT_FILE = "account-state.json";
 const PAPER_OPEN_MARKETS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/paper/open-markets.json";
 const SIGNALS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/signals.json";
+const AI_REVIEW_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/ai/latest-review.json";
 const LIVE_ALERT_STATE_FILE = "live-alert-state.json";
 const ALERT_SIGNAL_MAX_AGE_MIN = 8;
 const ALERT_RESERVATION_MIN = 20;
@@ -49,7 +50,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.11"
+    "User-Agent": "bitvavo-collector/2.12"
   };
 
   if (auth) {
@@ -124,7 +125,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.11" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -302,7 +303,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.11"
+    "User-Agent": "bitvavo-collector/2.12"
   };
 
   let sha;
@@ -354,7 +355,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.11"
+      "User-Agent": "bitvavo-collector/2.12"
     }
   });
   if (response.status === 404) return null;
@@ -458,7 +459,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.11"
+    "User-Agent": "bitvavo-collector/2.12"
   };
 
   let sha;
@@ -514,12 +515,25 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.11" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`signals.json fetch ${response.status}: ${text.slice(0, 300)}`);
+  }
+  return response.json();
+}
+
+async function fetchLatestAiReview() {
+  const response = await fetch(AI_REVIEW_URL, {
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.12" },
+    cf: { cacheTtl: 0, cacheEverything: false }
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`AI review fetch ${response.status}: ${text.slice(0, 300)}`);
   }
   return response.json();
 }
@@ -629,7 +643,62 @@ function fmt(value, digits = 6) {
   return Number.isFinite(x) ? x.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "") : "n/a";
 }
 
-function telegramMessage(signal, live, signalsDoc) {
+function truncateText(value, max = 320) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
+}
+
+function aiShadowSection(aiReviewDoc, signal, signalsDoc) {
+  const lines = ["", "🔎 AUDIT CONTEXTUEL IA — SHADOW"];
+  if (!aiReviewDoc || aiReviewDoc.snapshotCollectedAt !== signalsDoc.snapshotCollectedAt) {
+    lines.push("Indisponible pour ce snapshot. Le signal déterministe reste inchangé.");
+    return lines;
+  }
+
+  const review = (aiReviewDoc.reviews || []).find((r) => r.market === signal.market);
+  if (!review) {
+    lines.push("Aucun audit disponible pour ce marché. Le signal déterministe reste inchangé.");
+    return lines;
+  }
+
+  if (review.status !== "ok") {
+    const labels = {
+      not_configured: "Clé OpenAI non configurée",
+      budget_exhausted: "Budget IA mensuel atteint",
+      error: "Audit IA en erreur"
+    };
+    lines.push(`${labels[review.status] || "Audit indisponible"}. Aucun veto automatique.`);
+    return lines;
+  }
+
+  const verdictLabel = {
+    NO_MATERIAL_RISK_FOUND: "Aucun risque contextuel majeur identifié",
+    MATERIAL_RISK_FOUND: "Risque contextuel matériel détecté",
+    INSUFFICIENT_INFORMATION: "Informations insuffisantes"
+  }[review.verdict] || review.verdict || "Résultat non classé";
+
+  lines.push(`${verdictLabel} — aucun veto automatique.`);
+  if (review.summary) lines.push(truncateText(review.summary, 320));
+
+  const risks = Array.isArray(review.materialRisks) ? review.materialRisks.slice(0, 2) : [];
+  for (const risk of risks) lines.push(`⚠ ${truncateText(risk, 220)}`);
+
+  const sources = Array.isArray(review.sources) ? review.sources.slice(0, 2) : [];
+  if (sources.length) {
+    lines.push("Sources:");
+    for (const source of sources) {
+      const label = truncateText(source.title || source.url || "source", 90);
+      const url = source.url ? truncateText(source.url, 180) : "";
+      lines.push(`• ${label}${url ? ` — ${url}` : ""}`);
+    }
+  }
+
+  const eur = num(review?.cost?.estimatedCostEur);
+  if (eur !== null) lines.push(`Coût audit estimé: €${fmt(eur, 3)}`);
+  return lines;
+}
+
+function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null) {
   return [
     "🚨 BITVAVO STRICT BUY",
     `${signal.market} | Grade ${signal.tradeGrade} | ${signal.family}`,
@@ -643,8 +712,9 @@ function telegramMessage(signal, live, signalsDoc) {
     `Cible: €${fmt(live.target)}`,
     `R/R net live: ${fmt(live.netRR, 2)}`,
     `Coûts A/R estimés: ${fmt(live.roundTripCostPct, 2)}%`,
+    ...aiShadowSection(aiReviewDoc, signal, signalsDoc),
     "",
-    "ACTION: vérifier le prix dans Bitvavo Pro puis placer manuellement le trade spot si les niveaux restent comparables. Aucun ordre n'est exécuté automatiquement."
+    "ACTION: vérifier le prix dans Bitvavo Pro puis décider manuellement. L'audit IA est informatif, n'exécute aucun ordre et ne modifie pas les règles déterministes."
   ].join("\n");
 }
 
@@ -732,6 +802,15 @@ async function checkAndNotifyStrictSignals(env) {
       )
     : [];
 
+  let aiReviewDoc = null;
+  if (candidates.length) {
+    try {
+      aiReviewDoc = await fetchLatestAiReview();
+    } catch (error) {
+      console.error("AI shadow review fetch failed:", error);
+    }
+  }
+
   // A BUY alert is only valid while the latest deterministic snapshot still
   // classifies that market as actionable. If the user has not entered yet and
   // the setup disappears/downgrades, cancel the reservation and notify them.
@@ -808,7 +887,7 @@ async function checkAndNotifyStrictSignals(env) {
       continue;
     }
 
-    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc));
+    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc, aiReviewDoc));
     if (!telegram.ok) {
       blocked.push({ market: signal.market, reason: telegram.reason || "Telegram not configured" });
       continue;
@@ -887,7 +966,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.11",
+          version: "2.12",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -933,7 +1012,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.11 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.12 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
