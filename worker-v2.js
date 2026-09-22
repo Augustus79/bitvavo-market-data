@@ -22,26 +22,35 @@ const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 50;
 const CANDLE_LIMIT = 120;
 
+let cachedHmacSecret = null;
+let cachedHmacKey = null;
+
 async function hmacHex(secret, payload) {
   const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw", encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  if (!cachedHmacKey || cachedHmacSecret !== secret) {
+    cachedHmacKey = await crypto.subtle.importKey(
+      "raw", encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    cachedHmacSecret = secret;
+  }
+  const signature = await crypto.subtle.sign("HMAC", cachedHmacKey, encoder.encode(payload));
   return [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function getJson(url, env) {
+async function getJson(url, env, { auth = false } = {}) {
   const parsed = new URL(url);
   const path = parsed.pathname + parsed.search;
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.9"
+    "User-Agent": "bitvavo-collector/2.10"
   };
 
-  if (env?.BITVAVO_API_KEY && env?.BITVAVO_API_SECRET) {
+  if (auth) {
+    if (!env?.BITVAVO_API_KEY || !env?.BITVAVO_API_SECRET) {
+      throw new Error("Bitvavo private API credentials missing");
+    }
     const payload = timestamp + "GET" + path;
     headers["Bitvavo-Access-Key"] = env.BITVAVO_API_KEY;
     headers["Bitvavo-Access-Timestamp"] = timestamp;
@@ -110,7 +119,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.9" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.10" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -272,9 +281,10 @@ async function collectSnapshot(env) {
 function utf8ToBase64(text) {
   const bytes = new TextEncoder().encode(text);
   let binary = "";
+  const chunkSize = 0x4000;
 
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
 
   return btoa(binary);
@@ -287,7 +297,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.9"
+    "User-Agent": "bitvavo-collector/2.10"
   };
 
   let sha;
@@ -302,7 +312,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
 
   const body = {
     message,
-    content: utf8ToBase64(JSON.stringify(data, null, 2)),
+    content: utf8ToBase64(JSON.stringify(data)),
     branch
   };
   if (sha) body.sha = sha;
@@ -339,7 +349,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.9"
+      "User-Agent": "bitvavo-collector/2.10"
     }
   });
   if (response.status === 404) return null;
@@ -359,9 +369,9 @@ function parsePrivateRepo(value) {
 
 async function collectPrivateAccountState(env) {
   const [balances, openOrders, fees] = await Promise.all([
-    getJson(`${BITVAVO}/balance`, env),
-    getJson(`${BITVAVO}/ordersOpen`, env),
-    getJson(`${BITVAVO}/account/fees?quote=EUR`, env)
+    getJson(`${BITVAVO}/balance`, env, { auth: true }),
+    getJson(`${BITVAVO}/ordersOpen`, env, { auth: true }),
+    getJson(`${BITVAVO}/account/fees?quote=EUR`, env, { auth: true })
   ]);
 
   const normalizedBalances = Array.isArray(balances)
@@ -443,7 +453,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.9"
+    "User-Agent": "bitvavo-collector/2.10"
   };
 
   let sha;
@@ -464,7 +474,7 @@ async function publishToGitHub(snapshot, token) {
 
   const body = {
     message: "Update Bitvavo market snapshot v2",
-    content: utf8ToBase64(JSON.stringify(snapshot, null, 2)),
+    content: utf8ToBase64(JSON.stringify(snapshot)),
     branch: GITHUB_BRANCH
   };
 
@@ -499,7 +509,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.9" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.10" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -872,7 +882,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.9",
+          version: "2.10",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -918,7 +928,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.9 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.10 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
