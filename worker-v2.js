@@ -22,29 +22,34 @@ const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 50;
 const CANDLE_LIMIT = 120;
 
+const TEXT_ENCODER = new TextEncoder();
 let cachedHmacSecret = null;
 let cachedHmacKey = null;
 
 async function hmacHex(secret, payload) {
-  const encoder = new TextEncoder();
   if (!cachedHmacKey || cachedHmacSecret !== secret) {
     cachedHmacKey = await crypto.subtle.importKey(
-      "raw", encoder.encode(secret),
+      "raw", TEXT_ENCODER.encode(secret),
       { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
     );
     cachedHmacSecret = secret;
   }
-  const signature = await crypto.subtle.sign("HMAC", cachedHmacKey, encoder.encode(payload));
-  return [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const signature = await crypto.subtle.sign("HMAC", cachedHmacKey, TEXT_ENCODER.encode(payload));
+  const bytes = new Uint8Array(signature);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
-async function getJson(url, env, { auth = false } = {}) {
+async function getJson(url, env, { auth = true } = {}) {
   const parsed = new URL(url);
   const path = parsed.pathname + parsed.search;
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.10"
+    "User-Agent": "bitvavo-collector/2.11"
   };
 
   if (auth) {
@@ -119,7 +124,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.10" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.11" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -297,7 +302,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.10"
+    "User-Agent": "bitvavo-collector/2.11"
   };
 
   let sha;
@@ -349,7 +354,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.10"
+      "User-Agent": "bitvavo-collector/2.11"
     }
   });
   if (response.status === 404) return null;
@@ -453,7 +458,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.10"
+    "User-Agent": "bitvavo-collector/2.11"
   };
 
   let sha;
@@ -509,7 +514,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.10" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.11" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -882,7 +887,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.10",
+          version: "2.11",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -928,7 +933,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.10 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.11 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
