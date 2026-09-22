@@ -12,6 +12,9 @@ on:
       - "paper-trader.test.mjs"
       - "generate-paper.mjs"
       - "worker-v2.js"
+      - "ai-review-lib.js"
+      - "ai-review.test.mjs"
+      - "generate-ai-review.mjs"
       - "package.json"
   workflow_dispatch:
 
@@ -40,6 +43,11 @@ jobs:
         run: npm test
 
       - name: Generate and publish latest deterministic state
+        env:
+          OPENAI_API_KEY: ${{ secrets.BITVAVO_OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.6-terra
+          AI_MONTHLY_BUDGET_EUR: "2.00"
+          AI_USD_TO_EUR_REFERENCE: "0.87"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -52,10 +60,11 @@ jobs:
             git reset --hard origin/main
 
             npm run signals
+            npm run ai-review
             npm run paper
 
-            if [ -z "$(git status --porcelain -- signals.json history paper)" ]; then
-              echo "signals.json, history and paper state already current"
+            if [ -z "$(git status --porcelain -- signals.json history paper ai)" ]; then
+              echo "signals.json, history, paper and AI shadow state already current"
               if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
                 curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 30 \
                   -X POST \
@@ -65,7 +74,7 @@ jobs:
               exit 0
             fi
 
-            git add signals.json history paper
+            git add signals.json history paper ai
             git commit -m "Update signals, journal and paper trading state"
 
             if git push origin HEAD:main; then

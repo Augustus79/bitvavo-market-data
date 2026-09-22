@@ -46,6 +46,52 @@ function readJsonl(path) {
   }).filter(Boolean);
 }
 
+function readAiCostSummary() {
+  const path = "ai/cost-summary.json";
+  if (!fs.existsSync(path)) {
+    return {
+      mode: "shadow",
+      blocksTrades: false,
+      auditsAttempted: 0,
+      successfulAudits: 0,
+      totalWebSearchCalls: 0,
+      estimatedTotalCostUsd: 0,
+      estimatedTotalCostEur: 0,
+      monthly: {}
+    };
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(path,"utf8"));
+    return {
+      mode: "shadow",
+      blocksTrades: false,
+      auditsAttempted: Number(raw.auditsAttempted) || 0,
+      successfulAudits: Number(raw.successfulAudits) || 0,
+      failedAudits: Number(raw.failedAudits) || 0,
+      totalWebSearchCalls: Number(raw.totalWebSearchCalls) || 0,
+      totalInputTokens: Number(raw.totalInputTokens) || 0,
+      totalOutputTokens: Number(raw.totalOutputTokens) || 0,
+      estimatedTotalCostUsd: Number(raw.estimatedTotalCostUsd) || 0,
+      estimatedTotalCostEur: Number(raw.estimatedTotalCostEur) || 0,
+      referenceUsdToEur: Number(raw.referenceUsdToEur) || null,
+      monthly: raw.monthly || {},
+      verdictCounts: raw.verdictCounts || {}
+    };
+  } catch {
+    return {
+      mode: "shadow",
+      blocksTrades: false,
+      auditsAttempted: 0,
+      successfulAudits: 0,
+      totalWebSearchCalls: 0,
+      estimatedTotalCostUsd: 0,
+      estimatedTotalCostEur: 0,
+      monthly: {},
+      parseError: true
+    };
+  }
+}
+
 function summarize(state, trades) {
   const wins = trades.filter((t)=>t.netPnlEur>0);
   const losses = trades.filter((t)=>t.netPnlEur<=0);
@@ -124,13 +170,19 @@ fs.writeFileSync("paper/open-markets.json", JSON.stringify({
 
 const strictTrades = readJsonl("paper/trades.jsonl");
 const oppTrades = readJsonl("paper/opportunistic-trades.jsonl");
+const aiShadowAudit = readAiCostSummary();
+const aiCostEur = Number(aiShadowAudit.estimatedTotalCostEur) || 0;
 const comparison = {
   version: "1.0",
   updatedAt: snapshot.collectedAt,
-  note: "Strict mirrors production BUY logic. Opportunistic is paper-only: clean triggers can enter at net RR >= 1.25 or place a 30-minute retest limit targeting net RR 1.5. No opportunistic signal is a live recommendation.",
+  note: "Strict mirrors production BUY logic. Opportunistic is paper-only: clean triggers can enter at net RR >= 1.25 or place a 30-minute retest limit targeting net RR 1.5. AI contextual review is shadow-only and never changes entries, exits, sizing or signal validity.",
+  aiShadowAudit,
   strict: {
     policy: STRICT_POLICY,
-    ...summarize(strictResult.state, strictTrades)
+    ...summarize(strictResult.state, strictTrades),
+    aiShadowAuditCostEur: aiCostEur,
+    realizedNetPnlAfterAiCostEur: strictResult.state.realizedNetPnlEur - aiCostEur,
+    realizedEquityAfterAiCostEur: strictResult.state.realizedEquityEur - aiCostEur
   },
   opportunistic: {
     policy: OPPORTUNISTIC_POLICY,
