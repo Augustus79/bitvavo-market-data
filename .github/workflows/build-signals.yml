@@ -15,6 +15,10 @@ on:
       - "ai-review-lib.js"
       - "ai-review.test.mjs"
       - "generate-ai-review.mjs"
+      - "evaluation-lib.js"
+      - "evaluation.test.mjs"
+      - "generate-evaluation.mjs"
+      - "experiment/protocol.json"
       - "package.json"
   workflow_dispatch:
 
@@ -62,9 +66,10 @@ jobs:
             npm run signals
             npm run ai-review
             npm run paper
+            npm run evaluation
 
-            if [ -z "$(git status --porcelain -- signals.json history paper ai)" ]; then
-              echo "signals.json, history, paper and AI shadow state already current"
+            if [ -z "$(git status --porcelain -- signals.json history paper ai evaluation)" ]; then
+              echo "signals.json, history, paper, AI shadow and evaluation state already current"
               if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
                 curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 30 \
                   -X POST \
@@ -74,7 +79,7 @@ jobs:
               exit 0
             fi
 
-            git add signals.json history paper ai
+            git add signals.json history paper ai evaluation
             git commit -m "Update signals, journal and paper trading state"
 
             if git push origin HEAD:main; then
