@@ -46,7 +46,13 @@ const lockMatches=
 const strictTrades=readJsonl("paper/trades.jsonl");
 const oppTrades=readJsonl("paper/opportunistic-trades.jsonl");
 const aiReviews=readJsonl("ai/reviews.jsonl");
-const strict=tradeStats(strictTrades);
+const strictAllTime=tradeStats(strictTrades);
+const prospectiveStartMs=Date.parse(protocol.prospectiveStartAt || protocol.registeredAt);
+const strictProspectiveTrades=strictTrades.filter(t=>{
+  const ts=Date.parse(t.signalSnapshotAt ?? t.openedAt);
+  return Number.isFinite(ts) && Number.isFinite(prospectiveStartMs) && ts >= prospectiveStartMs;
+});
+const strict=tradeStats(strictProspectiveTrades);
 const opportunistic=tradeStats(oppTrades);
 const decision=decisionFromStats(strict,lockMatches,protocol);
 
@@ -65,7 +71,8 @@ const runRow={
   snapshotFresh:Boolean(signals.snapshotFresh),
   signalCount:Array.isArray(signals.signals)?signals.signals.length:0,
   actionableCount:Array.isArray(signals.actionable)?signals.actionable.length:0,
-  strictClosedTrades:strict.trades,
+  strictClosedTrades:strictAllTime.trades,
+  strictProspectiveClosedTrades:strict.trades,
   opportunisticClosedTrades:opportunistic.trades,
   aiAuditsAttempted:Number(comparison?.aiShadowAudit?.auditsAttempted)||0,
   aiEstimatedTotalCostEur:Number(comparison?.aiShadowAudit?.estimatedTotalCostEur)||0,
@@ -85,7 +92,7 @@ const reviewByKey=new Map(
   aiReviews.filter(r=>r?.status==="ok")
     .map(r=>[`${r.activationStartedAt}|${r.market}`,r])
 );
-const reviewedClosed=strictTrades.map(t=>{
+const reviewedClosed=strictProspectiveTrades.map(t=>{
   const signalAt=t.signalSnapshotAt??t.openedAt;
   const review=reviewByKey.get(`${signalAt}|${t.market}`)||null;
   return {trade:t,review};
@@ -122,8 +129,12 @@ const report={
     meanNetR:strict.meanNetR,
     meanNetRApprox95CI:strict.meanNetRApprox95CI
   },
-  strict:{
+  strictProspective:{
     ...strict,
+    prospectiveStartAt:protocol.prospectiveStartAt || protocol.registeredAt
+  },
+  strictAllTime:{
+    ...strictAllTime,
     realizedNetPnlAfterAiCostEur:actualStrictPnl-aiCostEur,
     aiShadowCostEur:aiCostEur,
     maxRealizedDrawdownPct:comparison?.strict?.maxRealizedDrawdownPct??null
