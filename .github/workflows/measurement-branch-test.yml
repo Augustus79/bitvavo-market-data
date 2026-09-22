@@ -1,0 +1,36 @@
+name: Validate measurement branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/measurement-branch-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout measurement branch
+        uses: actions/checkout@v4
+        with:
+          ref: measurement-protocol-v1
+          fetch-depth: 1
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run tests and dry pipeline
+        env:
+          OPENAI_MODEL: gpt-5.6-terra
+          AI_MONTHLY_BUDGET_EUR: "2.00"
+          AI_USD_TO_EUR_REFERENCE: "0.87"
+        run: |
+          npm test
+          npm run signals
+          npm run ai-review
+          npm run paper
+          npm run evaluation
+          cat evaluation/latest.json
