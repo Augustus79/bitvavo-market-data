@@ -1,0 +1,65 @@
+name: Collect Bitvavo snapshot
+
+on:
+  repository_dispatch:
+    types: [collect_snapshot]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect-bitvavo-snapshot
+  cancel-in-progress: true
+
+jobs:
+  collect-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Collect snapshot
+        env:
+          BITVAVO_API_KEY: ${{ secrets.BITVAVO_API_KEY }}
+          BITVAVO_API_SECRET: ${{ secrets.BITVAVO_API_SECRET }}
+          SNAPSHOT_OUTPUT: /tmp/snapshot.json
+        run: node collect-snapshot.mjs
+
+      - name: Publish snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3; do
+            echo "Snapshot publish attempt $attempt"
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/snapshot.json snapshot.json
+            git add snapshot.json
+
+            if git diff --cached --quiet; then
+              echo "snapshot.json already current"
+              exit 0
+            fi
+
+            git commit -m "Update Bitvavo market snapshot v2"
+
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "Remote changed during snapshot publish; retrying"
+            sleep 2
+          done
+
+          echo "Could not publish snapshot after 3 attempts"
+          exit 1
