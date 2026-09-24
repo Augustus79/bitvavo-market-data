@@ -50,7 +50,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.14"
+    "User-Agent": "bitvavo-collector/2.15"
   };
 
   if (auth) {
@@ -125,7 +125,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.14" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -302,7 +302,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.14"
+    "User-Agent": "bitvavo-collector/2.15"
   };
 
   let sha;
@@ -354,7 +354,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.14"
+      "User-Agent": "bitvavo-collector/2.15"
     }
   });
   if (response.status === 404) return null;
@@ -458,7 +458,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.14"
+    "User-Agent": "bitvavo-collector/2.15"
   };
 
   let sha;
@@ -514,7 +514,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.14" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -526,7 +526,7 @@ async function fetchLatestSignals() {
 
 async function fetchLatestAiReview() {
   const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.14" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -996,6 +996,47 @@ async function buildAndPublish(env) {
   };
 }
 
+async function triggerGitHubSnapshotCollection(env, source = "worker") {
+  if (!env?.GITHUB_TOKEN) {
+    throw new Error("GITHUB_TOKEN absent du Worker");
+  }
+
+  const requestedAt = new Date().toISOString();
+  const response = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "bitvavo-collector/2.15",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        event_type: "collect_snapshot",
+        client_payload: {
+          source,
+          requestedAt
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub dispatch ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  return {
+    ok: true,
+    message: "Snapshot collection dispatched to GitHub Actions",
+    mode: "github-actions",
+    requestedAt,
+    source
+  };
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -1005,7 +1046,8 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.14",
+          version: "2.15",
+          snapshotMode: "github-actions-dispatch",
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -1022,7 +1064,8 @@ export default {
           privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN),
           privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY),
           telegramAlertsConfigured: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID),
-          manualAlertCheckConfigured: Boolean(env?.ALERT_TRIGGER_KEY)
+          manualAlertCheckConfigured: Boolean(env?.ALERT_TRIGGER_KEY),
+          githubSnapshotDispatchConfigured: Boolean(env?.GITHUB_TOKEN)
         });
       }
 
@@ -1051,7 +1094,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.14 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.15 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
@@ -1069,7 +1112,7 @@ export default {
       }
 
       if (url.pathname === "/publish") {
-        return jsonResponse(await buildAndPublish(env));
+        return jsonResponse(await triggerGitHubSnapshotCollection(env, "manual-publish"));
       }
 
       const match = url.pathname.match(
@@ -1136,8 +1179,8 @@ export default {
 
     if (cron === "*/5 * * * *") {
       ctx.waitUntil(
-        buildAndPublish(env).catch((error) => {
-          console.error("Scheduled public snapshot failed:", error);
+        triggerGitHubSnapshotCollection(env, "cron-5m").catch((error) => {
+          console.error("Scheduled GitHub snapshot dispatch failed:", error);
         })
       );
       return;
