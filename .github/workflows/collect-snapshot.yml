@@ -34,32 +34,61 @@ jobs:
           SNAPSHOT_OUTPUT: /tmp/snapshot.json
         run: node collect-snapshot.mjs
 
-      - name: Publish snapshot
+      - name: Build and publish snapshot plus derived state
+        env:
+          OPENAI_API_KEY: ${{ secrets.BITVAVO_OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.6-terra
+          AI_MONTHLY_BUDGET_EUR: "2.00"
+          AI_USD_TO_EUR_REFERENCE: "0.87"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           for attempt in 1 2 3; do
-            echo "Snapshot publish attempt $attempt"
+            echo "Publish attempt $attempt"
+
+            # Rebuild against the latest main so paper state and open markets stay current.
             git fetch origin main
             git reset --hard origin/main
             cp /tmp/snapshot.json snapshot.json
-            git add snapshot.json
+
+            npm test
+            npm run signals
+            npm run ai-review
+            npm run paper
+            npm run evaluation
+
+            git add snapshot.json signals.json history paper ai evaluation
 
             if git diff --cached --quiet; then
-              echo "snapshot.json already current"
+              echo "Snapshot and derived state already current"
               exit 0
             fi
 
-            git commit -m "Update Bitvavo market snapshot v2"
+            git commit -m "Update Bitvavo snapshot and derived trading state"
 
             if git push origin HEAD:main; then
               exit 0
             fi
 
-            echo "Remote changed during snapshot publish; retrying"
+            echo "Remote changed during publish; retrying from latest main"
             sleep 2
           done
 
-          echo "Could not publish snapshot after 3 attempts"
+          echo "Could not publish snapshot and derived state after 3 attempts"
           exit 1
+
+      - name: Trigger real-time strict alert check
+        if: success()
+        env:
+          ALERT_TRIGGER_KEY: ${{ secrets.ALERT_TRIGGER_KEY }}
+        run: |
+          if [ -n "$ALERT_TRIGGER_KEY" ]; then
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+              -X POST \
+              -H "X-Alert-Key: $ALERT_TRIGGER_KEY" \
+              "https://bitvavo-collector.nicolasbonnin79.workers.dev/alert-check" || \
+              echo "::warning::Real-time alert check failed; scheduled fallback remains active."
+          else
+            echo "::warning::ALERT_TRIGGER_KEY secret not configured; real-time alert check skipped."
+          fi
