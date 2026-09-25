@@ -9,6 +9,8 @@ const PAPER_OPEN_MARKETS_URL = "https://raw.githubusercontent.com/Augustus79/bit
 const SIGNALS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/signals.json";
 const AI_REVIEW_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/ai/latest-review.json";
 const LIVE_ALERT_STATE_FILE = "live-alert-state.json";
+const EXECUTION_REHEARSAL_FILE = "execution-rehearsals.json";
+const PUBLIC_WORKER_BASE = "https://bitvavo-collector.nicolasbonnin79.workers.dev";
 const ALERT_SIGNAL_MAX_AGE_MIN = 8;
 const ALERT_RESERVATION_MIN = 20;
 const MAX_LIVE_POSITIONS = 2;
@@ -54,7 +56,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.17"
+    "User-Agent": "bitvavo-collector/2.18"
   };
 
   if (auth) {
@@ -87,6 +89,27 @@ function jsonResponse(data, status = 200) {
       "Access-Control-Allow-Origin": "*"
     }
   });
+}
+
+function htmlResponse(html, status = 200) {
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer"
+    }
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function num(value) {
@@ -129,7 +152,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -306,7 +329,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.17"
+    "User-Agent": "bitvavo-collector/2.18"
   };
 
   let sha;
@@ -358,7 +381,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.17"
+      "User-Agent": "bitvavo-collector/2.18"
     }
   });
   if (response.status === 404) return null;
@@ -462,7 +485,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.17"
+    "User-Agent": "bitvavo-collector/2.18"
   };
 
   let sha;
@@ -518,7 +541,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -530,7 +553,7 @@ async function fetchLatestSignals() {
 
 async function fetchLatestAiReview() {
   const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -543,7 +566,7 @@ async function fetchLatestAiReview() {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.3",
+    version: "1.4",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
@@ -564,7 +587,7 @@ function heldSymbols(account) {
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.3";
+  state.version = "1.4";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
@@ -875,20 +898,23 @@ function telegramCancellationMessage(pending, latestSignal, validityWindow = nul
   ].join("\n");
 }
 
-async function sendTelegram(env, text) {
+async function sendTelegram(env, text, { replyMarkup = null } = {}) {
   if (!env?.TELEGRAM_BOT_TOKEN || !env?.TELEGRAM_CHAT_ID) {
     return { ok: false, skipped: true, reason: "Telegram not configured" };
   }
+  const payload = {
+    chat_id: env.TELEGRAM_CHAT_ID,
+    text,
+    disable_web_page_preview: true
+  };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
+
   const response = await fetch(
     `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: env.TELEGRAM_CHAT_ID,
-        text,
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(payload)
     }
   );
   const body = await response.json().catch(() => ({}));
@@ -896,6 +922,206 @@ async function sendTelegram(env, text) {
     throw new Error(`Telegram send failed: ${JSON.stringify(body).slice(0, 400)}`);
   }
   return { ok: true, messageId: body?.result?.message_id ?? null };
+}
+
+async function makeRehearsalUrl(env, key, market, expiresAtMs) {
+  if (!env?.ALERT_TRIGGER_KEY) return null;
+  const payload = `${key}|${market}|${expiresAtMs}`;
+  const sig = await hmacHex(env.ALERT_TRIGGER_KEY, payload);
+  const params = new URLSearchParams({
+    key,
+    market,
+    exp: String(expiresAtMs),
+    sig
+  });
+  return `${PUBLIC_WORKER_BASE}/rehearse?${params.toString()}`;
+}
+
+async function verifyRehearsalRequest(env, key, market, expiresAtMs, suppliedSig) {
+  if (!env?.ALERT_TRIGGER_KEY || !key || !market || !Number.isFinite(expiresAtMs) || !suppliedSig) {
+    return false;
+  }
+  if (Date.now() > expiresAtMs) return false;
+  const expected = await hmacHex(env.ALERT_TRIGGER_KEY, `${key}|${market}|${expiresAtMs}`);
+  return expected === suppliedSig;
+}
+
+async function recordExecutionRehearsal(env, record) {
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!target || !env?.PRIVATE_GITHUB_TOKEN) return null;
+
+  const existing = await readJsonFromRepo({
+    owner: target.owner,
+    repo: target.repo,
+    path: EXECUTION_REHEARSAL_FILE,
+    branch: "main",
+    token: env.PRIVATE_GITHUB_TOKEN
+  });
+
+  const doc = existing && typeof existing === "object"
+    ? existing
+    : { version: "1.0", records: [] };
+
+  doc.version = "1.0";
+  doc.updatedAt = new Date().toISOString();
+  doc.records = Array.isArray(doc.records) ? doc.records.slice(-199) : [];
+  doc.records.push(record);
+
+  return publishJsonToRepo({
+    owner: target.owner,
+    repo: target.repo,
+    path: EXECUTION_REHEARSAL_FILE,
+    branch: "main",
+    data: doc,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: "Record execution rehearsal"
+  });
+}
+
+function rehearsalHtml(result) {
+  const valid = result?.valid === true;
+  const title = valid ? "✅ ENCORE VALIDE" : "❌ TROP TARD / INVALIDE";
+  const rows = [
+    ["Marché", result?.market],
+    ["Prix live", result?.liveEntry === null ? "n/a" : `€${fmt(result.liveEntry)}`],
+    ["Prix plafond", result?.maxEntry === null ? "n/a" : `€${fmt(result.maxEntry)}`],
+    ["R/R net live", result?.liveNetRR === null ? "n/a" : fmt(result.liveNetRR, 2)],
+    ["Montant simulé", result?.amountEur === null ? "n/a" : `€${fmt(result.amountEur, 2)}`],
+    ["Stop", result?.stop === null ? "n/a" : `€${fmt(result.stop)}`],
+    ["Cible", result?.target === null ? "n/a" : `€${fmt(result.target)}`],
+    ["Réaction depuis alerte", result?.notificationToClickSec === null ? "n/a" : `${fmt(result.notificationToClickSec, 1)} s`],
+    ["Réaction depuis snapshot", result?.snapshotToClickSec === null ? "n/a" : `${fmt(result.snapshotToClickSec, 1)} s`]
+  ];
+
+  return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bitvavo rehearsal</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:680px;margin:32px auto;padding:0 18px;background:#111;color:#f5f5f5}
+.card{border:1px solid #333;border-radius:16px;padding:22px;background:#181818}
+h1{font-size:1.55rem;margin:0 0 10px}
+p{line-height:1.45}
+table{width:100%;border-collapse:collapse;margin:18px 0}
+td{padding:10px 6px;border-bottom:1px solid #2b2b2b}
+td:first-child{color:#aaa;width:48%}
+.banner{padding:12px;border-radius:10px;background:#222;font-weight:700}
+.note{font-size:.92rem;color:#bbb;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>${escapeHtml(title)}</h1>
+<div class="banner">${escapeHtml(result?.reason || "")}</div>
+<table>${rows.map(([k,v])=>`<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join("")}</table>
+<p class="note"><strong>SIMULATION UNIQUEMENT.</strong> Aucun ordre n'a été transmis à Bitvavo. Ce test sert à mesurer ton temps de réaction et à vérifier si l'opportunité serait encore exécutable au moment du clic.</p>
+</div>
+</body>
+</html>`;
+}
+
+async function handleExecutionRehearsal(env, url) {
+  const key = url.searchParams.get("key") || "";
+  const market = url.searchParams.get("market") || "";
+  const expiresAtMs = Number(url.searchParams.get("exp"));
+  const suppliedSig = url.searchParams.get("sig") || "";
+
+  const authorized = await verifyRehearsalRequest(env, key, market, expiresAtMs, suppliedSig);
+  if (!authorized) {
+    return htmlResponse(rehearsalHtml({
+      valid: false,
+      market,
+      reason: "Lien invalide ou expiré.",
+      liveEntry: null,
+      maxEntry: null,
+      liveNetRR: null,
+      amountEur: null,
+      stop: null,
+      target: null,
+      notificationToClickSec: null,
+      snapshotToClickSec: null
+    }), 401);
+  }
+
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  const rawState = target && env?.PRIVATE_GITHUB_TOKEN
+    ? await readJsonFromRepo({
+        owner: target.owner,
+        repo: target.repo,
+        path: LIVE_ALERT_STATE_FILE,
+        branch: "main",
+        token: env.PRIVATE_GITHUB_TOKEN
+      })
+    : null;
+
+  const pending = (rawState?.pendingRecommendations || []).find((p) => p.key === key && p.market === market) || null;
+  const nowMs = Date.now();
+  const signalsDoc = await fetchLatestSignals();
+  const currentSignal = (signalsDoc?.actionable || []).find((s) => s.market === market) || null;
+
+  let valid = false;
+  let reason = "La recommandation n'est plus active.";
+  let live = null;
+
+  if (pending && currentSignal) {
+    const account = await collectPrivateAccountState(env);
+    const t = await getJson(`${BITVAVO}/ticker/24h?market=${market}`, env);
+    const ticker = compactTicker(Array.isArray(t) ? t[0] : t);
+    const otherPendingCapital = (rawState?.pendingRecommendations || [])
+      .filter((p) => p.key !== key)
+      .reduce((s, p) => s + (num(p.amountEur) || 0), 0);
+    const activeRisk = (rawState?.activePositions || [])
+      .reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
+    const otherPendingRisk = (rawState?.pendingRecommendations || [])
+      .filter((p) => p.key !== key)
+      .reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
+
+    live = calcLiveTrade(
+      currentSignal,
+      ticker,
+      account,
+      activeRisk + otherPendingRisk,
+      otherPendingCapital
+    );
+
+    if (live && live.entry <= live.maxEntry) {
+      valid = true;
+      reason = "Le BUY strict serait encore exécutable au moment de ce clic.";
+    } else {
+      reason = "Le prix/R-R live ne satisfait plus les règles strictes.";
+    }
+  }
+
+  const snapshotMs = Date.parse(pending?.signalSnapshotAt);
+  const notifiedMs = Date.parse(pending?.notifiedAt);
+  const record = {
+    clickedAt: new Date(nowMs).toISOString(),
+    key,
+    market,
+    valid,
+    reason,
+    signalSnapshotAt: pending?.signalSnapshotAt ?? null,
+    notifiedAt: pending?.notifiedAt ?? null,
+    snapshotToClickSec: Number.isFinite(snapshotMs) ? Number(((nowMs - snapshotMs) / 1000).toFixed(2)) : null,
+    notificationToClickSec: Number.isFinite(notifiedMs) ? Number(((nowMs - notifiedMs) / 1000).toFixed(2)) : null,
+    liveEntry: live?.entry ?? null,
+    maxEntry: live?.maxEntry ?? pending?.maxEntry ?? null,
+    liveNetRR: live?.netRR ?? null,
+    amountEur: live?.amountEur ?? null,
+    stop: live?.stop ?? pending?.stop ?? null,
+    target: live?.target ?? pending?.target ?? null,
+    orderSubmitted: false
+  };
+
+  try {
+    await recordExecutionRehearsal(env, record);
+  } catch (error) {
+    console.error("Execution rehearsal record failed:", error);
+  }
+
+  return htmlResponse(rehearsalHtml(record), valid ? 200 : 409);
 }
 
 async function checkAndNotifyStrictSignals(env) {
@@ -1181,7 +1407,21 @@ async function checkAndNotifyStrictSignals(env) {
     }
 
     const preAlertInfo = preAlertLeadByMarket.get(signal.market) || null;
-    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc, aiReviewDoc, preAlertInfo));
+    const rehearsalExpiresAtMs = nowMs + ALERT_RESERVATION_MIN * 60000;
+    const rehearsalUrl = await makeRehearsalUrl(env, key, signal.market, rehearsalExpiresAtMs);
+    const telegram = await sendTelegram(
+      env,
+      telegramMessage(signal, live, signalsDoc, aiReviewDoc, preAlertInfo),
+      {
+        replyMarkup: rehearsalUrl
+          ? {
+              inline_keyboard: [[
+                { text: "⚡ Vérifier / simuler l'exécution", url: rehearsalUrl }
+              ]]
+            }
+          : null
+      }
+    );
     if (!telegram.ok) {
       blocked.push({ market: signal.market, reason: telegram.reason || "Telegram not configured" });
       continue;
@@ -1222,7 +1462,7 @@ async function checkAndNotifyStrictSignals(env) {
       signalSnapshotAt: signalsDoc.snapshotCollectedAt,
       notifiedAt: new Date(sentAtMs).toISOString(),
       snapshotToNotificationSec,
-      expiresAtMs: nowMs + ALERT_RESERVATION_MIN * 60000,
+      expiresAtMs: rehearsalExpiresAtMs,
       family: signal.family,
       tradeGrade: signal.tradeGrade,
       score: signal.score,
@@ -1331,7 +1571,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.17",
+        "User-Agent": "bitvavo-collector/2.18",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -1367,7 +1607,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.17",
+          version: "2.18",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -1378,6 +1618,8 @@ export default {
             preAlertCooldownMin: PRE_ALERT_COOLDOWN_MIN,
             maxEntryCeiling: true,
             buyValidityMeasurement: true,
+            executionRehearsal: true,
+            liveOrderSubmission: false,
             strictEngineModified: false
           },
           routes: {
@@ -1385,7 +1627,8 @@ export default {
             publish: "/publish",
             privateSync: "/sync-private (POST, X-Private-Sync-Key required)",
             alertCheck: "/alert-check (POST, X-Alert-Key required)",
-            telegramTest: "/telegram-test (POST, X-Alert-Key required)"
+            telegramTest: "/telegram-test (POST, X-Alert-Key required)",
+            rehearsal: "/rehearse (signed one-time-style link from Telegram BUY alert)"
           },
           scheduledHandler: true,
           recommendedCrons: {
@@ -1399,6 +1642,13 @@ export default {
           manualAlertCheckConfigured: Boolean(env?.ALERT_TRIGGER_KEY),
           githubSnapshotDispatchConfigured: Boolean(env?.GITHUB_TOKEN)
         });
+      }
+
+      if (url.pathname === "/rehearse") {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        return handleExecutionRehearsal(env, url);
       }
 
       if (url.pathname === "/alert-check") {
@@ -1426,7 +1676,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.17 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.18 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
