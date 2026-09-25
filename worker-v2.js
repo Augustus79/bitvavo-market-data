@@ -13,6 +13,9 @@ const ALERT_SIGNAL_MAX_AGE_MIN = 8;
 const ALERT_RESERVATION_MIN = 20;
 const MAX_LIVE_POSITIONS = 2;
 const MAX_COMBINED_LIVE_RISK_EUR = 3;
+const STRICT_MIN_NET_RR = 1.5;
+const PRE_ALERT_MIN_SCORE = 8;
+const PRE_ALERT_COOLDOWN_MIN = 30;
 const DEFAULT_MAKER_FEE_PCT = 0.15;
 const DEFAULT_TAKER_FEE_PCT = 0.25;
 const SLIPPAGE_BUFFER_PCT = 0.03;
@@ -50,7 +53,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.15"
+    "User-Agent": "bitvavo-collector/2.16"
   };
 
   if (auth) {
@@ -125,7 +128,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -302,7 +305,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.15"
+    "User-Agent": "bitvavo-collector/2.16"
   };
 
   let sha;
@@ -354,7 +357,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.15"
+      "User-Agent": "bitvavo-collector/2.16"
     }
   });
   if (response.status === 404) return null;
@@ -458,7 +461,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.15"
+    "User-Agent": "bitvavo-collector/2.16"
   };
 
   let sha;
@@ -514,7 +517,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -526,7 +529,7 @@ async function fetchLatestSignals() {
 
 async function fetchLatestAiReview() {
   const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.15" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -539,12 +542,16 @@ async function fetchLatestAiReview() {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.1",
+    version: "1.2",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
     activePositions: [],
-    notificationHistory: []
+    notificationHistory: [],
+    preAlerts: [],
+    preAlertHistory: [],
+    signalValidityWindows: [],
+    reactionMetrics: null
   };
 }
 
@@ -560,6 +567,9 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
   state.notificationHistory = Array.isArray(state.notificationHistory) ? state.notificationHistory.slice(-200) : [];
+  state.preAlerts = Array.isArray(state.preAlerts) ? state.preAlerts : [];
+  state.preAlertHistory = Array.isArray(state.preAlertHistory) ? state.preAlertHistory.slice(-200) : [];
+  state.signalValidityWindows = Array.isArray(state.signalValidityWindows) ? state.signalValidityWindows.slice(-200) : [];
 
   const held = heldSymbols(account);
   const activeByMarket = new Map();
@@ -599,7 +609,20 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   return { state, unknownHeldSymbols };
 }
 
-function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapitalEur) {
+function maxEntryForNetRR(stop, target, roundTripCostPct, minNetRR = STRICT_MIN_NET_RR) {
+  const s = num(stop);
+  const t = num(target);
+  const c = num(roundTripCostPct);
+  const rr = num(minNetRR);
+  if (!(s > 0 && t > s && c !== null && c >= 0 && rr > 0)) return null;
+
+  // Solve exactly for E in:
+  // (grossRewardPct(E) - costs) / (structuralRiskPct(E) + costs) >= minNetRR.
+  const value = 100 * (t + rr * s) / ((1 + rr) * (100 + c));
+  return Number.isFinite(value) && value > s && value < t ? value : null;
+}
+
+function calcLiveStructure(signal, ticker, account) {
   const entry = num(ticker?.ask);
   const stop = num(signal?.stop);
   const target = num(signal?.target);
@@ -616,17 +639,10 @@ function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapital
   const netRiskPct = structuralRiskPct + roundTripCostPct;
   const netRewardPct = grossRewardPct - roundTripCostPct;
   const netRR = netRiskPct > 0 && netRewardPct > 0 ? netRewardPct / netRiskPct : null;
-  if (!(netRR >= 1.5)) return null;
-
-  const riskBudget = num(signal?.suggestedRiskEur);
-  const remainingRisk = Math.max(0, MAX_COMBINED_LIVE_RISK_EUR - reservedRiskEur);
-  const riskEur = Math.min(riskBudget || 0, remainingRisk);
-  if (!(riskEur > 0)) return null;
-
-  const eurBalance = (account?.balances || []).find((b) => b.symbol === "EUR");
-  const availableEur = Math.max(0, (num(eurBalance?.available) || 0) - reservedCapitalEur);
-  const amountEur = Math.min(availableEur, riskEur / (netRiskPct / 100));
-  if (!(amountEur > 0)) return null;
+  const maxEntry = maxEntryForNetRR(stop, target, roundTripCostPct, STRICT_MIN_NET_RR);
+  const entryHeadroomPct = maxEntry && entry > 0
+    ? 100 * (maxEntry - entry) / entry
+    : null;
 
   return {
     entry,
@@ -639,9 +655,112 @@ function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapital
     netRiskPct,
     netRewardPct,
     netRR,
-    riskEur: amountEur * netRiskPct / 100,
+    maxEntry,
+    entryHeadroomPct
+  };
+}
+
+function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapitalEur) {
+  const structure = calcLiveStructure(signal, ticker, account);
+  if (!structure || !(structure.netRR >= STRICT_MIN_NET_RR)) return null;
+
+  const riskBudget = num(signal?.suggestedRiskEur);
+  const remainingRisk = Math.max(0, MAX_COMBINED_LIVE_RISK_EUR - reservedRiskEur);
+  const riskEur = Math.min(riskBudget || 0, remainingRisk);
+  if (!(riskEur > 0)) return null;
+
+  const eurBalance = (account?.balances || []).find((b) => b.symbol === "EUR");
+  const availableEur = Math.max(0, (num(eurBalance?.available) || 0) - reservedCapitalEur);
+  const amountEur = Math.min(availableEur, riskEur / (structure.netRiskPct / 100));
+  if (!(amountEur > 0)) return null;
+
+  return {
+    ...structure,
+    riskEur: amountEur * structure.netRiskPct / 100,
     amountEur,
-    quantity: amountEur / entry
+    quantity: amountEur / structure.entry
+  };
+}
+
+function isStrongPreAlertCandidate(signal) {
+  const setupState = signal?.setupState;
+  if (signal?.action === "BUY" || !["ARMED", "TRIGGERED"].includes(setupState)) return false;
+
+  const score = num(signal?.score) ?? num(signal?.contextScore);
+  const strongGrade = signal?.tradeGrade === "A" || signal?.contextGrade === "A";
+  if (!strongGrade || !(score >= PRE_ALERT_MIN_SCORE)) return false;
+
+  const blockers = Array.isArray(signal?.blockers) ? signal.blockers : [];
+  if (!blockers.length) return false;
+
+  const rrBlocker = "net structural R/R below threshold";
+  const triggerBlocker = "entry trigger absent";
+  const allowed = new Set([rrBlocker, triggerBlocker]);
+  if (blockers.some((b) => !allowed.has(b))) return false;
+
+  if (setupState === "TRIGGERED") {
+    return blockers.length === 1 && blockers[0] === rrBlocker;
+  }
+
+  return blockers.includes(triggerBlocker);
+}
+
+function closeValidityWindow(window, currentSnapshotAt) {
+  const firstMs = Date.parse(window.firstValidSnapshotAt);
+  const lastMs = Date.parse(window.lastValidSnapshotAt);
+  const invalidMs = Date.parse(currentSnapshotAt);
+  return {
+    ...window,
+    status: "closed",
+    invalidatedAtSnapshot: currentSnapshotAt,
+    confirmedValidForSec: Number.isFinite(firstMs) && Number.isFinite(lastMs)
+      ? Math.max(0, Number(((lastMs - firstMs) / 1000).toFixed(2)))
+      : null,
+    invalidatedWithinSec: Number.isFinite(firstMs) && Number.isFinite(invalidMs)
+      ? Math.max(0, Number(((invalidMs - firstMs) / 1000).toFixed(2)))
+      : null
+  };
+}
+
+function validityWindowLabel(window) {
+  if (!window || window.status !== "closed") return null;
+  const lower = num(window.confirmedValidForSec);
+  const upper = num(window.invalidatedWithinSec);
+  if (upper === null) return null;
+  if (!lower || lower <= 0) {
+    return `< ${fmt(upper / 60, 1)} min (1 seul snapshot BUY confirmé)`;
+  }
+  return `entre ${fmt(lower / 60, 1)} et ${fmt(upper / 60, 1)} min`;
+}
+
+function summarizeReactionMetrics(state) {
+  const closed = (state.signalValidityWindows || [])
+    .filter((w) => w?.status === "closed" && num(w.invalidatedWithinSec) !== null);
+  const upperMinutes = closed.map((w) => num(w.invalidatedWithinSec) / 60).sort((a, b) => a - b);
+  const meanUpperBoundMin = upperMinutes.length
+    ? upperMinutes.reduce((a, b) => a + b, 0) / upperMinutes.length
+    : null;
+  const medianUpperBoundMin = upperMinutes.length
+    ? (upperMinutes.length % 2
+        ? upperMinutes[(upperMinutes.length - 1) / 2]
+        : (upperMinutes[upperMinutes.length / 2 - 1] + upperMinutes[upperMinutes.length / 2]) / 2)
+    : null;
+
+  const converted = (state.preAlertHistory || [])
+    .filter((p) => p?.resolution === "BUY" && num(p.leadTimeToBuySec) !== null);
+  const leadMinutes = converted.map((p) => num(p.leadTimeToBuySec) / 60);
+  const meanPreAlertLeadMin = leadMinutes.length
+    ? leadMinutes.reduce((a, b) => a + b, 0) / leadMinutes.length
+    : null;
+
+  return {
+    closedBuyWindows: closed.length,
+    meanInvalidationUpperBoundMin: meanUpperBoundMin === null ? null : Number(meanUpperBoundMin.toFixed(2)),
+    medianInvalidationUpperBoundMin: medianUpperBoundMin === null ? null : Number(medianUpperBoundMin.toFixed(2)),
+    preAlertsSent: (state.preAlertHistory || []).length + (state.preAlerts || []).length,
+    preAlertsConvertedToBuy: converted.length,
+    meanPreAlertLeadMin: meanPreAlertLeadMin === null ? null : Number(meanPreAlertLeadMin.toFixed(2)),
+    note: "BUY duration is interval-censored by the ~5-minute snapshot cadence; upper bounds are not exact expiry times."
   };
 }
 
@@ -705,13 +824,19 @@ function aiShadowSection(aiReviewDoc, signal, signalsDoc) {
   return lines;
 }
 
-function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null) {
+function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null, preAlertInfo = null) {
+  const preAlertLead = preAlertInfo?.leadTimeToBuySec !== null && preAlertInfo?.leadTimeToBuySec !== undefined
+    ? `Pré-alerte envoyée ~${fmt(preAlertInfo.leadTimeToBuySec / 60, 1)} min avant ce BUY.`
+    : null;
+
   return [
     "🚨 BITVAVO STRICT BUY",
     `${signal.market} | Grade ${signal.tradeGrade} | ${signal.family}`,
     `BTC regime: ${signalsDoc.btcRegime}`,
     "",
     `Entrée live: €${fmt(live.entry)}`,
+    `Prix plafond indicatif (R/R net ≥ ${fmt(STRICT_MIN_NET_RR, 2)}): €${fmt(live.maxEntry)}`,
+    `Marge jusqu'au plafond: ${fmt(live.entryHeadroomPct, 2)}%`,
     `Montant: €${fmt(live.amountEur, 2)}`,
     `Quantité: ${fmt(live.quantity, 8)}`,
     `Stop structurel: €${fmt(live.stop)}`,
@@ -719,23 +844,43 @@ function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null) {
     `Cible: €${fmt(live.target)}`,
     `R/R net live: ${fmt(live.netRR, 2)}`,
     `Coûts A/R estimés: ${fmt(live.roundTripCostPct, 2)}%`,
+    ...(preAlertLead ? ["", `⏱ ${preAlertLead}`] : []),
     ...aiShadowSection(aiReviewDoc, signal, signalsDoc),
     "",
-    "ACTION: vérifier le prix dans Bitvavo Pro puis décider manuellement. L'audit IA est informatif, n'exécute aucun ordre et ne modifie pas les règles déterministes."
+    "ACTION: vérifier le prix dans Bitvavo Pro. Si le prix d'achat est AU-DESSUS du plafond affiché, NE PAS ENTRER. Le plafond dépend du spread/coût live et reste indicatif jusqu'à l'exécution. L'audit IA est informatif et ne modifie pas les règles déterministes."
   ].join("\n");
 }
 
-function telegramCancellationMessage(pending, latestSignal) {
+function telegramPreAlertMessage(signal, live, signalsDoc) {
+  const blockers = Array.isArray(signal?.blockers) ? signal.blockers.join("; ") : "setup non confirmé";
+  return [
+    "🟡 BITVAVO PRÉ-ALERTE — PAS UN BUY",
+    `${signal.market} | ${signal.setupState} | ${signal.family}`,
+    `Contexte: ${signal.contextGrade || signal.tradeGrade || "n/a"} | Score: ${fmt(signal.score, 1)}`,
+    `BTC regime: ${signalsDoc.btcRegime}`,
+    "",
+    `Prix live: €${fmt(live.entry)}`,
+    `R/R net live indicatif: ${fmt(live.netRR, 2)}`,
+    `Prix plafond indicatif si BUY confirmé: €${fmt(live.maxEntry)}`,
+    `Blocage actuel: ${blockers}`,
+    "",
+    "ACTION: se tenir prêt / ouvrir Bitvavo Pro si disponible, mais NE PAS ENTRER avant une alerte 🚨 STRICT BUY. Cette pré-alerte ne réserve ni capital ni risque."
+  ].join("\n");
+}
+
+function telegramCancellationMessage(pending, latestSignal, validityWindow = null) {
   const state = latestSignal?.setupState || latestSignal?.action || "non actionable";
   const blockers = Array.isArray(latestSignal?.blockers) && latestSignal.blockers.length
     ? latestSignal.blockers.join("; ")
     : "le signal n'est plus présent parmi les BUY stricts du dernier snapshot";
+  const validity = validityWindowLabel(validityWindow);
 
   return [
     "❌ BITVAVO SIGNAL ANNULÉ",
     `${pending.market} | ancienne recommandation BUY`,
     `État actuel: ${state}`,
     `Raison: ${blockers}`,
+    ...(validity ? [`Fenêtre BUY observée: ${validity}`] : []),
     "",
     "ACTION: NE PAS ENTRER si l'ordre n'a pas encore été exécuté. La recommandation précédente n'est plus valide."
   ].join("\n");
@@ -826,6 +971,121 @@ async function checkAndNotifyStrictSignals(env) {
     (Array.isArray(signalsDoc?.signals) ? signalsDoc.signals : [])
       .map((s) => [s.market, s])
   );
+
+  // Measure how long each notified BUY remains actionable. With 5-minute
+  // snapshots the exact expiry is interval-censored: we retain both the last
+  // confirmed-valid snapshot and the first invalid snapshot.
+  state.signalValidityWindows = state.signalValidityWindows.map((window) => {
+    if (window?.status !== "open") return window;
+    if (actionableMarkets.has(window.market)) {
+      return { ...window, lastValidSnapshotAt: signalsDoc.snapshotCollectedAt };
+    }
+    return closeValidityWindow(window, signalsDoc.snapshotCollectedAt);
+  }).slice(-200);
+
+  // Resolve existing pre-alerts first. A conversion to BUY gives us measured
+  // human lead time without changing the deterministic trading engine.
+  const preAlertCandidates = (Array.isArray(signalsDoc?.signals) ? signalsDoc.signals : [])
+    .filter(isStrongPreAlertCandidate);
+  const preAlertCandidateByMarket = new Map(preAlertCandidates.map((s) => [s.market, s]));
+  const preAlertLeadByMarket = new Map();
+  const continuingPreAlerts = [];
+
+  for (const pre of state.preAlerts) {
+    if (actionableMarkets.has(pre.market)) {
+      const leadTimeToBuySec = Number.isFinite(Date.parse(pre.notifiedAt)) && Number.isFinite(snapshotMs)
+        ? Number(((snapshotMs - Date.parse(pre.notifiedAt)) / 1000).toFixed(2))
+        : null;
+      const resolved = {
+        ...pre,
+        resolvedAt: signalsDoc.snapshotCollectedAt,
+        resolution: "BUY",
+        leadTimeToBuySec
+      };
+      state.preAlertHistory.push(resolved);
+      preAlertLeadByMarket.set(pre.market, resolved);
+      continue;
+    }
+
+    const current = preAlertCandidateByMarket.get(pre.market);
+    if (current) {
+      continuingPreAlerts.push({
+        ...pre,
+        lastSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
+        setupState: current.setupState,
+        score: current.score,
+        blockers: current.blockers
+      });
+      continue;
+    }
+
+    state.preAlertHistory.push({
+      ...pre,
+      resolvedAt: signalsDoc.snapshotCollectedAt,
+      resolution: "EXPIRED",
+      leadTimeToBuySec: null
+    });
+  }
+  state.preAlerts = continuingPreAlerts;
+  state.preAlertHistory = state.preAlertHistory.slice(-200);
+
+  const recentPreAlertAt = (market) => {
+    const history = [...state.preAlertHistory].reverse().find((p) => p.market === market);
+    const active = state.preAlerts.find((p) => p.market === market);
+    const iso = active?.notifiedAt || history?.notifiedAt;
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) ? ms : null;
+  };
+
+  // Informational heads-up only: strong ARMED/TRIGGERED setups with no blocker
+  // other than trigger/RR. No capital/risk reservation and no engine override.
+  for (const signal of preAlertCandidates) {
+    if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
+    if (state.preAlerts.some((p) => p.market === signal.market)) continue;
+    if (reconciled.unknownHeldSymbols.length || unmanagedOrders.length) continue;
+
+    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + reconciled.unknownHeldSymbols.length;
+    if (reservedSlots >= MAX_LIVE_POSITIONS) continue;
+
+    const lastPreAt = recentPreAlertAt(signal.market);
+    if (lastPreAt !== null && nowMs - lastPreAt < PRE_ALERT_COOLDOWN_MIN * 60000) continue;
+
+    try {
+      const t = await getJson(`${BITVAVO}/ticker/24h?market=${signal.market}`, env);
+      const ticker = compactTicker(Array.isArray(t) ? t[0] : t);
+      const live = calcLiveStructure(signal, ticker, account);
+      if (!live?.maxEntry) continue;
+
+      const telegram = await sendTelegram(env, telegramPreAlertMessage(signal, live, signalsDoc));
+      if (!telegram.ok) continue;
+
+      state.preAlerts.push({
+        key: `pre|${signalsDoc.snapshotCollectedAt}|${signal.market}`,
+        market: signal.market,
+        family: signal.family,
+        setupState: signal.setupState,
+        score: signal.score,
+        firstSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
+        lastSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
+        notifiedAt: new Date().toISOString(),
+        telegramMessageId: telegram.messageId,
+        blockers: signal.blockers,
+        liveEntryAtPreAlert: live.entry,
+        liveNetRRAtPreAlert: live.netRR,
+        maxEntryAtPreAlert: live.maxEntry
+      });
+      notified.push({
+        market: signal.market,
+        action: "PRE_ALERT",
+        liveNetRR: live.netRR,
+        maxEntry: live.maxEntry
+      });
+    } catch (error) {
+      console.error("Pre-alert failed:", signal.market, error);
+      blocked.push({ market: signal.market, reason: "pre-alert failed" });
+    }
+  }
+
   const stillPending = [];
   for (const p of state.pendingRecommendations) {
     if (actionableMarkets.has(p.market)) {
@@ -835,9 +1095,12 @@ async function checkAndNotifyStrictSignals(env) {
 
     const latestSignal = latestSignalsByMarket.get(p.market) || null;
     try {
+      const validityWindow = [...state.signalValidityWindows]
+        .reverse()
+        .find((w) => w.market === p.market && (w.key === p.validityWindowId || !p.validityWindowId)) || null;
       const telegram = await sendTelegram(
         env,
-        telegramCancellationMessage(p, latestSignal)
+        telegramCancellationMessage(p, latestSignal, validityWindow)
       );
       if (!telegram.ok) {
         blocked.push({
@@ -894,7 +1157,8 @@ async function checkAndNotifyStrictSignals(env) {
       continue;
     }
 
-    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc, aiReviewDoc));
+    const preAlertInfo = preAlertLeadByMarket.get(signal.market) || null;
+    const telegram = await sendTelegram(env, telegramMessage(signal, live, signalsDoc, aiReviewDoc, preAlertInfo));
     if (!telegram.ok) {
       blocked.push({ market: signal.market, reason: telegram.reason || "Telegram not configured" });
       continue;
@@ -907,6 +1171,27 @@ async function checkAndNotifyStrictSignals(env) {
     const snapshotToNotificationSec = Number.isFinite(snapshotMs)
       ? Number(((sentAtMs - snapshotMs) / 1000).toFixed(2))
       : null;
+
+    let validityWindow = [...state.signalValidityWindows]
+      .reverse()
+      .find((w) => w.market === signal.market && w.status === "open") || null;
+    if (!validityWindow) {
+      validityWindow = {
+        key: `validity|${key}`,
+        market: signal.market,
+        family: signal.family,
+        firstValidSnapshotAt: signalsDoc.snapshotCollectedAt,
+        lastValidSnapshotAt: signalsDoc.snapshotCollectedAt,
+        notifiedAt: new Date(sentAtMs).toISOString(),
+        status: "open",
+        liveEntryAtAlert: live.entry,
+        maxEntryAtAlert: live.maxEntry,
+        liveNetRRAtAlert: live.netRR,
+        preAlertLeadTimeSec: preAlertInfo?.leadTimeToBuySec ?? null
+      };
+      state.signalValidityWindows.push(validityWindow);
+      state.signalValidityWindows = state.signalValidityWindows.slice(-200);
+    }
 
     const reservation = {
       key,
@@ -925,6 +1210,10 @@ async function checkAndNotifyStrictSignals(env) {
       quantity: live.quantity,
       plannedRiskEur: live.riskEur,
       liveNetRR: live.netRR,
+      maxEntry: live.maxEntry,
+      entryHeadroomPct: live.entryHeadroomPct,
+      validityWindowId: validityWindow.key,
+      preAlertLeadTimeSec: preAlertInfo?.leadTimeToBuySec ?? null,
       telegramMessageId: telegram.messageId,
       aiShadowStatus: aiReview?.status ?? "unavailable",
       aiShadowVerdict: aiReview?.verdict ?? null,
@@ -940,6 +1229,9 @@ async function checkAndNotifyStrictSignals(env) {
       notifiedAt: reservation.notifiedAt,
       snapshotToNotificationSec,
       liveNetRR: live.netRR,
+      maxEntry: live.maxEntry,
+      preAlertLeadTimeSec: reservation.preAlertLeadTimeSec,
+      validityWindowId: reservation.validityWindowId,
       aiShadowStatus: reservation.aiShadowStatus,
       aiShadowVerdict: reservation.aiShadowVerdict,
       aiShadowCostEur: reservation.aiShadowCostEur
@@ -960,6 +1252,10 @@ async function checkAndNotifyStrictSignals(env) {
   }
 
   state.notifiedKeys = state.notifiedKeys.slice(-200);
+  state.preAlerts = state.preAlerts.slice(-50);
+  state.preAlertHistory = state.preAlertHistory.slice(-200);
+  state.signalValidityWindows = state.signalValidityWindows.slice(-200);
+  state.reactionMetrics = summarizeReactionMetrics(state);
   state.updatedAt = new Date().toISOString();
   await publishJsonToRepo({
     owner: privateTarget.owner,
@@ -978,7 +1274,9 @@ async function checkAndNotifyStrictSignals(env) {
     notified,
     blocked,
     activePositions: state.activePositions.map((p) => p.market),
-    pendingRecommendations: state.pendingRecommendations.map((p) => p.market)
+    pendingRecommendations: state.pendingRecommendations.map((p) => p.market),
+    preAlerts: state.preAlerts.map((p) => p.market),
+    reactionMetrics: state.reactionMetrics
   };
 }
 
@@ -1010,7 +1308,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.15",
+        "User-Agent": "bitvavo-collector/2.16",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -1046,8 +1344,14 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.15",
+          version: "2.16",
           snapshotMode: "github-actions-dispatch",
+          alertLayer: {
+            preAlerts: true,
+            maxEntryCeiling: true,
+            buyValidityMeasurement: true,
+            strictEngineModified: false
+          },
           routes: {
             market: "/market/BTC-EUR",
             publish: "/publish",
@@ -1094,7 +1398,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.15 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.16 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
