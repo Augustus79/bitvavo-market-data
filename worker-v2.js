@@ -14,8 +14,9 @@ const ALERT_RESERVATION_MIN = 20;
 const MAX_LIVE_POSITIONS = 2;
 const MAX_COMBINED_LIVE_RISK_EUR = 3;
 const STRICT_MIN_NET_RR = 1.5;
-const PRE_ALERT_MIN_SCORE = 8;
-const PRE_ALERT_COOLDOWN_MIN = 30;
+const PRE_ALERT_MIN_SCORE = 9;
+const PRE_ALERT_MIN_LIVE_NET_RR = 1.25;
+const PRE_ALERT_COOLDOWN_MIN = 60;
 const DEFAULT_MAKER_FEE_PCT = 0.15;
 const DEFAULT_TAKER_FEE_PCT = 0.25;
 const SLIPPAGE_BUFFER_PCT = 0.03;
@@ -53,7 +54,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.16"
+    "User-Agent": "bitvavo-collector/2.17"
   };
 
   if (auth) {
@@ -128,7 +129,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -305,7 +306,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.16"
+    "User-Agent": "bitvavo-collector/2.17"
   };
 
   let sha;
@@ -357,7 +358,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.16"
+      "User-Agent": "bitvavo-collector/2.17"
     }
   });
   if (response.status === 404) return null;
@@ -461,7 +462,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.16"
+    "User-Agent": "bitvavo-collector/2.17"
   };
 
   let sha;
@@ -517,7 +518,7 @@ async function publishToGitHub(snapshot, token) {
 
 async function fetchLatestSignals() {
   const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (!response.ok) {
@@ -529,7 +530,7 @@ async function fetchLatestSignals() {
 
 async function fetchLatestAiReview() {
   const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.16" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.17" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -542,7 +543,7 @@ async function fetchLatestAiReview() {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.2",
+    version: "1.3",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
@@ -563,6 +564,7 @@ function heldSymbols(account) {
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
+  state.version = "1.3";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
@@ -683,26 +685,13 @@ function calcLiveTrade(signal, ticker, account, reservedRiskEur, reservedCapital
 }
 
 function isStrongPreAlertCandidate(signal) {
-  const setupState = signal?.setupState;
-  if (signal?.action === "BUY" || !["ARMED", "TRIGGERED"].includes(setupState)) return false;
+  if (signal?.action === "BUY" || signal?.setupState !== "TRIGGERED") return false;
 
   const score = num(signal?.score) ?? num(signal?.contextScore);
-  const strongGrade = signal?.tradeGrade === "A" || signal?.contextGrade === "A";
-  if (!strongGrade || !(score >= PRE_ALERT_MIN_SCORE)) return false;
+  if (signal?.tradeGrade !== "A" || !(score >= PRE_ALERT_MIN_SCORE)) return false;
 
   const blockers = Array.isArray(signal?.blockers) ? signal.blockers : [];
-  if (!blockers.length) return false;
-
-  const rrBlocker = "net structural R/R below threshold";
-  const triggerBlocker = "entry trigger absent";
-  const allowed = new Set([rrBlocker, triggerBlocker]);
-  if (blockers.some((b) => !allowed.has(b))) return false;
-
-  if (setupState === "TRIGGERED") {
-    return blockers.length === 1 && blockers[0] === rrBlocker;
-  }
-
-  return blockers.includes(triggerBlocker);
+  return blockers.length === 1 && blockers[0] === "net structural R/R below threshold";
 }
 
 function closeValidityWindow(window, currentSnapshotAt) {
@@ -1037,52 +1026,86 @@ async function checkAndNotifyStrictSignals(env) {
     return Number.isFinite(ms) ? ms : null;
   };
 
-  // Informational heads-up only: strong ARMED/TRIGGERED setups with no blocker
-  // other than trigger/RR. No capital/risk reservation and no engine override.
-  for (const signal of preAlertCandidates) {
-    if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
-    if (state.preAlerts.some((p) => p.market === signal.market)) continue;
-    if (reconciled.unknownHeldSymbols.length || unmanagedOrders.length) continue;
-
+  // Informational heads-up only. Keep Telegram quiet: one active pre-alert
+  // maximum, only for a Grade A TRIGGERED setup whose sole blocker is R/R and
+  // whose live net R/R is already close to the strict 1.50 threshold.
+  if (
+    state.preAlerts.length === 0 &&
+    !reconciled.unknownHeldSymbols.length &&
+    !unmanagedOrders.length
+  ) {
     const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + reconciled.unknownHeldSymbols.length;
-    if (reservedSlots >= MAX_LIVE_POSITIONS) continue;
 
-    const lastPreAt = recentPreAlertAt(signal.market);
-    if (lastPreAt !== null && nowMs - lastPreAt < PRE_ALERT_COOLDOWN_MIN * 60000) continue;
+    if (reservedSlots < MAX_LIVE_POSITIONS) {
+      const eligible = [];
 
-    try {
-      const t = await getJson(`${BITVAVO}/ticker/24h?market=${signal.market}`, env);
-      const ticker = compactTicker(Array.isArray(t) ? t[0] : t);
-      const live = calcLiveStructure(signal, ticker, account);
-      if (!live?.maxEntry) continue;
+      for (const signal of preAlertCandidates) {
+        if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
 
-      const telegram = await sendTelegram(env, telegramPreAlertMessage(signal, live, signalsDoc));
-      if (!telegram.ok) continue;
+        const lastPreAt = recentPreAlertAt(signal.market);
+        if (lastPreAt !== null && nowMs - lastPreAt < PRE_ALERT_COOLDOWN_MIN * 60000) continue;
 
-      state.preAlerts.push({
-        key: `pre|${signalsDoc.snapshotCollectedAt}|${signal.market}`,
-        market: signal.market,
-        family: signal.family,
-        setupState: signal.setupState,
-        score: signal.score,
-        firstSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
-        lastSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
-        notifiedAt: new Date().toISOString(),
-        telegramMessageId: telegram.messageId,
-        blockers: signal.blockers,
-        liveEntryAtPreAlert: live.entry,
-        liveNetRRAtPreAlert: live.netRR,
-        maxEntryAtPreAlert: live.maxEntry
-      });
-      notified.push({
-        market: signal.market,
-        action: "PRE_ALERT",
-        liveNetRR: live.netRR,
-        maxEntry: live.maxEntry
-      });
-    } catch (error) {
-      console.error("Pre-alert failed:", signal.market, error);
-      blocked.push({ market: signal.market, reason: "pre-alert failed" });
+        try {
+          const t = await getJson(`${BITVAVO}/ticker/24h?market=${signal.market}`, env);
+          const ticker = compactTicker(Array.isArray(t) ? t[0] : t);
+          const live = calcLiveStructure(signal, ticker, account);
+
+          if (
+            !live?.maxEntry ||
+            !(live.netRR >= PRE_ALERT_MIN_LIVE_NET_RR) ||
+            !(live.netRR < STRICT_MIN_NET_RR)
+          ) {
+            continue;
+          }
+
+          eligible.push({ signal, live });
+        } catch (error) {
+          console.error("Pre-alert candidate check failed:", signal.market, error);
+        }
+      }
+
+      // Closest to a valid BUY first: highest live net R/R below 1.50.
+      eligible.sort((a, b) =>
+        (num(b.live?.netRR) || 0) - (num(a.live?.netRR) || 0) ||
+        (num(b.signal?.score) || 0) - (num(a.signal?.score) || 0)
+      );
+
+      const best = eligible[0] || null;
+      if (best) {
+        try {
+          const telegram = await sendTelegram(
+            env,
+            telegramPreAlertMessage(best.signal, best.live, signalsDoc)
+          );
+
+          if (telegram.ok) {
+            state.preAlerts.push({
+              key: `pre|${signalsDoc.snapshotCollectedAt}|${best.signal.market}`,
+              market: best.signal.market,
+              family: best.signal.family,
+              setupState: best.signal.setupState,
+              score: best.signal.score,
+              firstSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
+              lastSeenSnapshotAt: signalsDoc.snapshotCollectedAt,
+              notifiedAt: new Date().toISOString(),
+              telegramMessageId: telegram.messageId,
+              blockers: best.signal.blockers,
+              liveEntryAtPreAlert: best.live.entry,
+              liveNetRRAtPreAlert: best.live.netRR,
+              maxEntryAtPreAlert: best.live.maxEntry
+            });
+            notified.push({
+              market: best.signal.market,
+              action: "PRE_ALERT",
+              liveNetRR: best.live.netRR,
+              maxEntry: best.live.maxEntry
+            });
+          }
+        } catch (error) {
+          console.error("Pre-alert failed:", best.signal.market, error);
+          blocked.push({ market: best.signal.market, reason: "pre-alert failed" });
+        }
+      }
     }
   }
 
@@ -1308,7 +1331,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.16",
+        "User-Agent": "bitvavo-collector/2.17",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -1344,10 +1367,15 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.16",
+          version: "2.17",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
+            preAlertMode: "triggered-grade-a-near-buy-only",
+            preAlertMinScore: PRE_ALERT_MIN_SCORE,
+            preAlertMinLiveNetRR: PRE_ALERT_MIN_LIVE_NET_RR,
+            preAlertMaxActive: 1,
+            preAlertCooldownMin: PRE_ALERT_COOLDOWN_MIN,
             maxEntryCeiling: true,
             buyValidityMeasurement: true,
             strictEngineModified: false
@@ -1398,7 +1426,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.16 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.17 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
