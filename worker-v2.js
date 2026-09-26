@@ -19,6 +19,10 @@ const STRICT_MIN_NET_RR = 1.5;
 const PRE_ALERT_MIN_SCORE = 9;
 const PRE_ALERT_MIN_LIVE_NET_RR = 1.25;
 const PRE_ALERT_COOLDOWN_MIN = 60;
+const AUTO_MAX_POSITIONS = 1;
+const AUTO_MAX_NOTIONAL_EUR = 100;
+const AUTO_DAILY_LOSS_LIMIT_EUR = 5;
+const AUTO_SIGNAL_MAX_AGE_SEC = 90;
 const DEFAULT_MAKER_FEE_PCT = 0.15;
 const DEFAULT_TAKER_FEE_PCT = 0.25;
 const SLIPPAGE_BUFFER_PCT = 0.03;
@@ -50,13 +54,68 @@ async function hmacHex(secret, payload) {
   return hex;
 }
 
+function liveTradingCredentialsConfigured(env) {
+  return Boolean(
+    env?.LIVE_BITVAVO_API_KEY &&
+    env?.LIVE_BITVAVO_API_SECRET &&
+    Number.isInteger(Number(env?.LIVE_TRADING_OPERATOR_ID))
+  );
+}
+
+function liveTradingEnabled(env) {
+  return env?.LIVE_TRADING_ENABLED === "true" && liveTradingCredentialsConfigured(env);
+}
+
+async function livePrivateJson(env, method, endpoint, { query = null, body = null } = {}) {
+  if (!liveTradingCredentialsConfigured(env)) {
+    throw new Error("Dedicated live-trading Bitvavo credentials are not configured");
+  }
+
+  const qs = query
+    ? "?" + new URLSearchParams(
+        Object.entries(query)
+          .filter(([,v]) => v !== null && v !== undefined)
+          .map(([k,v]) => [k, String(v)])
+      ).toString()
+    : "";
+  const path = `/v2${endpoint}${qs}`;
+  const url = `https://api.bitvavo.com${path}`;
+  const timestamp = Date.now().toString();
+  const bodyText = body ? JSON.stringify(body) : "";
+  const payload = timestamp + method + path + bodyText;
+  const signature = await hmacHex(env.LIVE_BITVAVO_API_SECRET, payload);
+
+  const response = await fetch(url, {
+    method,
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "bitvavo-collector/2.19",
+      "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
+      "Bitvavo-Access-Timestamp": timestamp,
+      "Bitvavo-Access-Signature": signature,
+      "Bitvavo-Access-Window": "10000"
+    },
+    body: body ? bodyText : undefined
+  });
+
+  const data = await response.json().catch(async () => ({ raw: await response.text().catch(() => "") }));
+  if (!response.ok) {
+    const err = new Error(`Bitvavo live API ${method} ${endpoint} failed (${response.status}): ${JSON.stringify(data).slice(0,500)}`);
+    err.status = response.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 async function getJson(url, env, { auth = true } = {}) {
   const parsed = new URL(url);
   const path = parsed.pathname + parsed.search;
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.18"
+    "User-Agent": "bitvavo-collector/2.19"
   };
 
   if (auth) {
@@ -152,7 +211,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.19" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -329,7 +388,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.18"
+    "User-Agent": "bitvavo-collector/2.19"
   };
 
   let sha;
@@ -381,7 +440,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.18"
+      "User-Agent": "bitvavo-collector/2.19"
     }
   });
   if (response.status === 404) return null;
@@ -485,7 +544,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.18"
+    "User-Agent": "bitvavo-collector/2.19"
   };
 
   let sha;
@@ -539,34 +598,49 @@ async function publishToGitHub(snapshot, token) {
   };
 }
 
-async function fetchLatestSignals() {
-  const response = await fetch(SIGNALS_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
-    cf: { cacheTtl: 0, cacheEverything: false }
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`signals.json fetch ${response.status}: ${text.slice(0, 300)}`);
+async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
+  if (env?.GITHUB_TOKEN) {
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}?ref=${GITHUB_BRANCH}`,
+      {
+        headers: {
+          "Accept": "application/vnd.github+json",
+          "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "bitvavo-collector/2.19"
+        }
+      }
+    );
+    if (response.status === 404) return null;
+    if (response.ok) {
+      const data = await response.json();
+      return JSON.parse(base64ToUtf8(data.content));
+    }
   }
-  return response.json();
-}
 
-async function fetchLatestAiReview() {
-  const response = await fetch(AI_REVIEW_URL, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.18" },
+  const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.19" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`AI review fetch ${response.status}: ${text.slice(0, 300)}`);
+    throw new Error(`${path} fetch ${response.status}: ${text.slice(0, 300)}`);
   }
   return response.json();
 }
 
+async function fetchLatestSignals(env) {
+  return fetchPublicRepoJson("signals.json", env, SIGNALS_URL);
+}
+
+async function fetchLatestAiReview(env) {
+  return fetchPublicRepoJson("ai/latest-review.json", env, AI_REVIEW_URL);
+}
+
 function emptyLiveAlertState() {
   return {
-    version: "1.4",
+    version: "1.5",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
@@ -575,7 +649,12 @@ function emptyLiveAlertState() {
     preAlerts: [],
     preAlertHistory: [],
     signalValidityWindows: [],
-    reactionMetrics: null
+    reactionMetrics: null,
+    autoExecutionKeys: [],
+    autoPositions: [],
+    autoTradeHistory: [],
+    autoTradingHalted: false,
+    autoTradingHaltReason: null
   };
 }
 
@@ -587,8 +666,13 @@ function heldSymbols(account) {
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.4";
+  state.version = "1.5";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
+  state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys.slice(-500) : [];
+  state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
+  state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory.slice(-500) : [];
+  state.autoTradingHalted = Boolean(state.autoTradingHalted);
+  state.autoTradingHaltReason = state.autoTradingHaltReason || null;
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
   state.notificationHistory = Array.isArray(state.notificationHistory) ? state.notificationHistory.slice(-200) : [];
@@ -629,9 +713,492 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.activePositions = [...activeByMarket.values()];
   state.updatedAt = new Date(nowMs).toISOString();
 
-  const knownSymbols = new Set(state.activePositions.map((p) => String(p.market).replace(/-EUR$/, "")));
+  const knownSymbols = new Set([
+    ...state.activePositions.map((p) => String(p.market).replace(/-EUR$/, "")),
+    ...state.autoPositions.map((p) => String(p.market).replace(/-EUR$/, ""))
+  ]);
   const unknownHeldSymbols = [...held].filter((s) => !knownSymbols.has(s));
   return { state, unknownHeldSymbols };
+}
+
+function floorDecimals(value, decimals) {
+  const d = Math.max(0, Math.min(18, Number(decimals) || 0));
+  const factor = 10 ** d;
+  return Math.floor((Number(value) + Number.EPSILON) * factor) / factor;
+}
+
+function floorTick(value, tickSize) {
+  const tick = num(tickSize);
+  if (!(tick > 0)) return Number(value);
+  return Math.floor((Number(value) + 1e-12) / tick) * tick;
+}
+
+function ceilTick(value, tickSize) {
+  const tick = num(tickSize);
+  if (!(tick > 0)) return Number(value);
+  return Math.ceil((Number(value) - 1e-12) / tick) * tick;
+}
+
+function orderFilledAmount(order) {
+  const direct = num(order?.filledAmount);
+  if (direct !== null) return direct;
+  const amount = num(order?.amount);
+  const remaining = num(order?.amountRemaining);
+  return amount !== null && remaining !== null ? Math.max(0, amount - remaining) : 0;
+}
+
+function orderFilledQuote(order) {
+  const direct = num(order?.filledAmountQuote);
+  if (direct !== null) return direct;
+  const fills = Array.isArray(order?.fills) ? order.fills : [];
+  return fills.reduce((sum, f) => sum + (num(f?.amount) || 0) * (num(f?.price) || 0), 0);
+}
+
+function orderFeeEur(order, fallbackPrice = null) {
+  const fee = num(order?.feePaid) || 0;
+  if (!fee) return 0;
+  if (order?.feeCurrency === "EUR") return fee;
+  const price = num(fallbackPrice);
+  return price ? fee * price : 0;
+}
+
+async function deterministicUuid(value) {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(String(value)))
+  );
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+async function getMarketRules(market, env) {
+  const data = await getJson(`${BITVAVO}/markets?market=${encodeURIComponent(market)}`, env, { auth: false });
+  const rules = Array.isArray(data) ? data[0] : data;
+  if (!rules || rules.market !== market || rules.status !== "trading") {
+    throw new Error(`Market rules unavailable/not trading for ${market}`);
+  }
+  return rules;
+}
+
+function autoDailyRealizedPnlEur(state, nowMs = Date.now()) {
+  const day = new Date(nowMs).toISOString().slice(0, 10);
+  return (state.autoTradeHistory || [])
+    .filter((t) => String(t.closedAt || "").startsWith(day))
+    .reduce((sum, t) => sum + (num(t.realizedPnlEur) || 0), 0);
+}
+
+function liveOperatorId(env) {
+  const id = Number(env?.LIVE_TRADING_OPERATOR_ID);
+  if (!Number.isInteger(id)) throw new Error("LIVE_TRADING_OPERATOR_ID must be an integer");
+  return id;
+}
+
+async function createLiveOrderIdempotent(env, body, clientSeed) {
+  const clientOrderId = await deterministicUuid(clientSeed);
+  const payload = { ...body, clientOrderId, operatorId: liveOperatorId(env), responseRequired: true };
+
+  try {
+    return await livePrivateJson(env, "POST", "/order", { body: payload });
+  } catch (error) {
+    // If the request reached Bitvavo but the response was lost, recover by the
+    // deterministic clientOrderId instead of risking a duplicate live order.
+    try {
+      return await livePrivateJson(env, "GET", "/order", {
+        query: { market: body.market, clientOrderId }
+      });
+    } catch {
+      throw error;
+    }
+  }
+}
+
+async function cancelLiveOrder(env, market, orderId) {
+  return livePrivateJson(env, "DELETE", "/order", {
+    query: { market, orderId, operatorId: liveOperatorId(env) }
+  });
+}
+
+async function getLiveOrder(env, market, orderId) {
+  return livePrivateJson(env, "GET", "/order", { query: { market, orderId } });
+}
+
+async function placeProtectiveStop(env, positionSeed, market, amount, stop, rules) {
+  const quantity = floorDecimals(amount, rules.quantityDecimals);
+  const triggerAmount = ceilTick(stop, rules.tickSize);
+  if (!(quantity > 0 && triggerAmount > 0)) throw new Error("Invalid protective stop values");
+
+  return createLiveOrderIdempotent(
+    env,
+    {
+      market,
+      side: "sell",
+      orderType: "stopLoss",
+      amount: String(quantity),
+      triggerAmount: String(triggerAmount),
+      triggerType: "price",
+      triggerReference: "lastTrade"
+    },
+    `${positionSeed}|stop`
+  );
+}
+
+async function emergencyMarketExit(env, positionSeed, market, amount, rules) {
+  const quantity = floorDecimals(amount, rules.quantityDecimals);
+  if (!(quantity > 0)) throw new Error("Invalid emergency exit quantity");
+  return createLiveOrderIdempotent(
+    env,
+    {
+      market,
+      side: "sell",
+      orderType: "market",
+      amount: String(quantity)
+    },
+    `${positionSeed}|emergency-exit`
+  );
+}
+
+function autoEntryTelegram(position) {
+  return [
+    "🤖 BITVAVO ACHAT AUTO EXÉCUTÉ",
+    `${position.market} | Grade ${position.tradeGrade} | ${position.family}`,
+    "",
+    `Montant investi: ~€${fmt(position.entryQuoteEur, 2)}`,
+    `Quantité: ${fmt(position.quantity, 8)}`,
+    `Prix moyen d'entrée: €${fmt(position.avgEntryPrice)}`,
+    `Stop automatique Bitvavo: €${fmt(position.stop)}`,
+    `Cible automatique: €${fmt(position.target)}`,
+    `Risque planifié: €${fmt(position.plannedRiskEur, 2)}`,
+    "",
+    "Le stop est placé directement chez Bitvavo. La cible est surveillée par le Worker. Aucun retrait n'est utilisé."
+  ].join("\n");
+}
+
+function autoExitTelegram(trade) {
+  const emoji = trade.realizedPnlEur >= 0 ? "✅" : "🛑";
+  return [
+    `${emoji} BITVAVO VENTE AUTO — ${trade.exitReason}`,
+    trade.market,
+    `P&L réalisé estimé: €${fmt(trade.realizedPnlEur, 2)}`,
+    `Entrée: €${fmt(trade.avgEntryPrice)}`,
+    `Sortie: €${fmt(trade.avgExitPrice)}`,
+    `Quantité: ${fmt(trade.quantity, 8)}`
+  ].join("\n");
+}
+
+async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
+  if (!liveTradingEnabled(env)) return { executed: false, reason: "live trading disabled" };
+
+  const signalMs = Date.parse(signalsDoc?.snapshotCollectedAt);
+  const ageSec = Number.isFinite(signalMs) ? (Date.now() - signalMs) / 1000 : Infinity;
+  if (!(ageSec >= 0 && ageSec <= AUTO_SIGNAL_MAX_AGE_SEC)) {
+    return { executed: false, reason: `signal too old for auto execution (${ageSec.toFixed(1)}s)` };
+  }
+
+  if (state.autoTradingHalted) return { executed: false, reason: state.autoTradingHaltReason || "auto trading halted" };
+  if ((state.autoPositions || []).length >= AUTO_MAX_POSITIONS) return { executed: false, reason: "auto position limit reached" };
+
+  const dailyPnl = autoDailyRealizedPnlEur(state);
+  if (dailyPnl <= -AUTO_DAILY_LOSS_LIMIT_EUR) {
+    state.autoTradingHalted = true;
+    state.autoTradingHaltReason = `daily realized loss limit reached (€${fmt(dailyPnl, 2)})`;
+    return { executed: false, reason: state.autoTradingHaltReason };
+  }
+
+  const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
+  if (state.autoExecutionKeys.includes(key)) return { executed: false, reason: "signal already auto-processed" };
+
+  const rules = await getMarketRules(signal.market, env);
+  const limitPrice = floorTick(live.maxEntry, rules.tickSize);
+  const notionalCap = Math.min(AUTO_MAX_NOTIONAL_EUR, live.amountEur);
+  const quantity = floorDecimals(notionalCap / limitPrice, rules.quantityDecimals);
+  const worstCaseQuote = quantity * limitPrice;
+
+  if (!(limitPrice >= live.entry && limitPrice <= live.maxEntry + 1e-12)) {
+    return { executed: false, reason: "rounded limit price no longer valid" };
+  }
+  if (!(quantity > 0 && worstCaseQuote >= (num(rules.minOrderInQuoteAsset) || 0))) {
+    return { executed: false, reason: "order below market minimum" };
+  }
+
+  state.autoExecutionKeys.push(key);
+  state.autoExecutionKeys = state.autoExecutionKeys.slice(-500);
+
+  const entryOrder = await createLiveOrderIdempotent(
+    env,
+    {
+      market: signal.market,
+      side: "buy",
+      orderType: "limit",
+      amount: String(quantity),
+      price: String(limitPrice),
+      timeInForce: "FOK",
+      postOnly: false
+    },
+    `${key}|entry`
+  );
+
+  const filledAmount = orderFilledAmount(entryOrder);
+  if (!(filledAmount > 0)) {
+    return {
+      executed: false,
+      reason: `entry not filled (${entryOrder?.status || "unknown"})`,
+      orderId: entryOrder?.orderId || null
+    };
+  }
+
+  const entryQuoteEur = orderFilledQuote(entryOrder) || filledAmount * live.entry;
+  const avgEntryPrice = filledAmount > 0 ? entryQuoteEur / filledAmount : live.entry;
+  let stopOrder;
+
+  try {
+    stopOrder = await placeProtectiveStop(env, key, signal.market, filledAmount, live.stop, rules);
+  } catch (stopError) {
+    let emergency = null;
+    try {
+      emergency = await emergencyMarketExit(env, key, signal.market, filledAmount, rules);
+    } catch (exitError) {
+      state.autoTradingHalted = true;
+      state.autoTradingHaltReason = `CRITICAL: entry filled on ${signal.market} but stop and emergency exit both failed`;
+      await sendTelegram(env, [
+        "🚨 CRITIQUE — POSITION NON PROTÉGÉE",
+        signal.market,
+        state.autoTradingHaltReason,
+        "Vérifier immédiatement le compte Bitvavo."
+      ].join("\n"));
+      throw exitError;
+    }
+
+    state.autoTradingHalted = true;
+    state.autoTradingHaltReason = `protective stop failed after ${signal.market} entry; emergency exit submitted`;
+    await sendTelegram(env, [
+      "⚠️ ACHAT AUTO ANNULÉ PAR SÉCURITÉ",
+      signal.market,
+      "Le stop de protection n'a pas pu être placé. Une vente d'urgence a été envoyée.",
+      `Ordre d'urgence: ${emergency?.orderId || "n/a"}`
+    ].join("\n"));
+    return { executed: false, reason: state.autoTradingHaltReason, emergencyExit: true };
+  }
+
+  const position = {
+    key,
+    market: signal.market,
+    openedAt: new Date().toISOString(),
+    signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+    family: signal.family,
+    tradeGrade: signal.tradeGrade,
+    score: signal.score,
+    quantity: filledAmount,
+    entryOrderId: entryOrder.orderId,
+    stopOrderId: stopOrder.orderId,
+    entryQuoteEur,
+    entryFeeEur: orderFeeEur(entryOrder, avgEntryPrice),
+    avgEntryPrice,
+    entryLimitPrice: limitPrice,
+    stop: num(stopOrder?.triggerAmount) || ceilTick(live.stop, rules.tickSize),
+    target: floorTick(live.target, rules.tickSize),
+    plannedRiskEur: live.riskEur,
+    liveNetRRAtEntry: live.netRR,
+    maxEntryAtSignal: live.maxEntry,
+    status: "auto-active"
+  };
+
+  state.autoPositions.push(position);
+  await sendTelegram(env, autoEntryTelegram(position));
+
+  return { executed: true, position };
+}
+
+async function finalizeAutoTrade(env, state, position, exitOrder, exitReason) {
+  const exitAmount = orderFilledAmount(exitOrder) || position.quantity;
+  const exitQuoteEur = orderFilledQuote(exitOrder);
+  const avgExitPrice = exitAmount > 0 && exitQuoteEur > 0
+    ? exitQuoteEur / exitAmount
+    : null;
+  const exitFeeEur = orderFeeEur(exitOrder, avgExitPrice);
+  const realizedPnlEur = exitQuoteEur > 0
+    ? exitQuoteEur - position.entryQuoteEur - position.entryFeeEur - exitFeeEur
+    : null;
+
+  const trade = {
+    ...position,
+    status: "closed",
+    closedAt: new Date().toISOString(),
+    exitReason,
+    exitOrderId: exitOrder?.orderId || position.stopOrderId || null,
+    exitQuoteEur,
+    exitFeeEur,
+    avgExitPrice,
+    realizedPnlEur
+  };
+
+  state.autoTradeHistory.push(trade);
+  state.autoTradeHistory = state.autoTradeHistory.slice(-500);
+  state.autoPositions = state.autoPositions.filter((p) => p.key !== position.key);
+
+  if (realizedPnlEur !== null && autoDailyRealizedPnlEur(state) <= -AUTO_DAILY_LOSS_LIMIT_EUR) {
+    state.autoTradingHalted = true;
+    state.autoTradingHaltReason = `daily realized loss limit reached (€${fmt(autoDailyRealizedPnlEur(state), 2)})`;
+  }
+
+  await sendTelegram(env, autoExitTelegram(trade));
+  return trade;
+}
+
+async function manageAutomatedPositions(env, state) {
+  const events = [];
+  if (!(state.autoPositions || []).length) return events;
+  if (!liveTradingCredentialsConfigured(env)) {
+    state.autoTradingHalted = true;
+    state.autoTradingHaltReason = "live trading credentials missing while auto position exists";
+    return [{ type: "CRITICAL", reason: state.autoTradingHaltReason }];
+  }
+
+  for (const position of [...state.autoPositions]) {
+    let stopOrder;
+    try {
+      stopOrder = await getLiveOrder(env, position.market, position.stopOrderId);
+    } catch (error) {
+      events.push({ market: position.market, type: "STOP_STATUS_ERROR", error: error.message });
+      continue;
+    }
+
+    if (stopOrder?.status === "filled") {
+      const trade = await finalizeAutoTrade(env, state, position, stopOrder, "STOP");
+      events.push({ market: position.market, type: "STOP_FILLED", realizedPnlEur: trade.realizedPnlEur });
+      continue;
+    }
+
+    const tickerRaw = await getJson(`${BITVAVO}/ticker/24h?market=${position.market}`, env);
+    const ticker = compactTicker(Array.isArray(tickerRaw) ? tickerRaw[0] : tickerRaw);
+    const executableBid = num(ticker?.bid);
+
+    if (executableBid !== null && executableBid >= position.target) {
+      try {
+        await cancelLiveOrder(env, position.market, position.stopOrderId);
+        const account = await collectPrivateAccountState(env);
+        const symbol = String(position.market).replace(/-EUR$/, "");
+        const balance = (account.balances || []).find((b) => b.symbol === symbol);
+        const rules = await getMarketRules(position.market, env);
+        const quantity = floorDecimals(
+          Math.min(position.quantity, num(balance?.available) || 0),
+          rules.quantityDecimals
+        );
+
+        if (!(quantity > 0)) throw new Error("No available base balance after stop cancellation");
+
+        const exitOrder = await createLiveOrderIdempotent(
+          env,
+          {
+            market: position.market,
+            side: "sell",
+            orderType: "market",
+            amount: String(quantity)
+          },
+          `${position.key}|target-exit`
+        );
+
+        const trade = await finalizeAutoTrade(env, state, position, exitOrder, "TARGET");
+        events.push({ market: position.market, type: "TARGET_EXIT", realizedPnlEur: trade.realizedPnlEur });
+        continue;
+      } catch (error) {
+        // If the target exit fails after canceling the stop, restore a stop as
+        // the first priority. If restoration also fails, halt and escalate.
+        try {
+          const rules = await getMarketRules(position.market, env);
+          const account = await collectPrivateAccountState(env);
+          const symbol = String(position.market).replace(/-EUR$/, "");
+          const balance = (account.balances || []).find((b) => b.symbol === symbol);
+          const available = num(balance?.available) || 0;
+          if (available > 0) {
+            const replacement = await placeProtectiveStop(
+              env,
+              `${position.key}|replacement-${Date.now()}`,
+              position.market,
+              available,
+              position.stop,
+              rules
+            );
+            position.stopOrderId = replacement.orderId;
+          }
+        } catch (restoreError) {
+          state.autoTradingHalted = true;
+          state.autoTradingHaltReason = `CRITICAL: target exit and stop restoration failed for ${position.market}`;
+          await sendTelegram(env, [
+            "🚨 CRITIQUE — VÉRIFICATION BITVAVO IMMÉDIATE",
+            position.market,
+            state.autoTradingHaltReason
+          ].join("\n"));
+        }
+        events.push({ market: position.market, type: "TARGET_EXIT_ERROR", error: error.message });
+      }
+    } else if (["canceled", "expired"].includes(stopOrder?.status)) {
+      try {
+        const rules = await getMarketRules(position.market, env);
+        const account = await collectPrivateAccountState(env);
+        const symbol = String(position.market).replace(/-EUR$/, "");
+        const balance = (account.balances || []).find((b) => b.symbol === symbol);
+        const available = num(balance?.available) || 0;
+        if (available > 0) {
+          const replacement = await placeProtectiveStop(
+            env,
+            `${position.key}|replacement-${Date.now()}`,
+            position.market,
+            available,
+            position.stop,
+            rules
+          );
+          position.stopOrderId = replacement.orderId;
+          events.push({ market: position.market, type: "STOP_REPLACED" });
+        }
+      } catch (error) {
+        state.autoTradingHalted = true;
+        state.autoTradingHaltReason = `CRITICAL: protective stop missing for ${position.market}`;
+        await sendTelegram(env, [
+          "🚨 CRITIQUE — STOP DE PROTECTION ABSENT",
+          position.market,
+          "Vérifier immédiatement Bitvavo."
+        ].join("\n"));
+        events.push({ market: position.market, type: "STOP_REPLACE_ERROR", error: error.message });
+      }
+    }
+  }
+
+  return events;
+}
+
+async function manageAutomatedPositionsOnly(env) {
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!target || !env?.PRIVATE_GITHUB_TOKEN) return { ok: false, skipped: true, reason: "private repo unavailable" };
+
+  const rawState = await readJsonFromRepo({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_ALERT_STATE_FILE,
+    branch: "main",
+    token: env.PRIVATE_GITHUB_TOKEN
+  });
+  const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
+  state.version = "1.5";
+  state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys : [];
+  state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
+  state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory : [];
+
+  if (!state.autoPositions.length) return { ok: true, skipped: true, reason: "no auto positions" };
+
+  const events = await manageAutomatedPositions(env, state);
+  state.updatedAt = new Date().toISOString();
+  await publishJsonToRepo({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_ALERT_STATE_FILE,
+    branch: "main",
+    data: state,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: "Manage automated Bitvavo positions"
+  });
+  return { ok: true, events, autoPositions: state.autoPositions.map((p) => p.market) };
 }
 
 function maxEntryForNetRR(stop, target, roundTripCostPct, minNetRR = STRICT_MIN_NET_RR) {
@@ -1058,7 +1625,7 @@ async function handleExecutionRehearsal(env, url) {
 
   const pending = (rawState?.pendingRecommendations || []).find((p) => p.key === key && p.market === market) || null;
   const nowMs = Date.now();
-  const signalsDoc = await fetchLatestSignals();
+  const signalsDoc = await fetchLatestSignals(env);
   const currentSignal = (signalsDoc?.actionable || []).find((s) => s.market === market) || null;
 
   let valid = false;
@@ -1130,7 +1697,7 @@ async function checkAndNotifyStrictSignals(env) {
     return { ok: false, skipped: true, reason: "private GitHub target not configured" };
   }
 
-  const signalsDoc = await fetchLatestSignals();
+  const signalsDoc = await fetchLatestSignals(env);
   const snapshotMs = Date.parse(signalsDoc?.snapshotCollectedAt);
   const nowMs = Date.now();
   const ageMin = Number.isFinite(snapshotMs) ? (nowMs - snapshotMs) / 60000 : Infinity;
@@ -1149,13 +1716,21 @@ async function checkAndNotifyStrictSignals(env) {
   const reconciled = reconcileLiveAlertState(rawState, account, nowMs);
   const state = reconciled.state;
 
-  const activeMarkets = new Set(state.activePositions.map((p) => p.market));
+  const autoManagementEvents = await manageAutomatedPositions(env, state);
+
+  const activeMarkets = new Set([
+    ...state.activePositions.map((p) => p.market),
+    ...state.autoPositions.map((p) => p.market)
+  ]);
   const pendingMarkets = new Set(state.pendingRecommendations.map((p) => p.market));
   const activeRisk = state.activePositions.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
   let pendingRisk = state.pendingRecommendations.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
   let pendingCapital = state.pendingRecommendations.reduce((s, p) => s + (num(p.amountEur) || 0), 0);
 
-  const managedOpenMarkets = new Set(state.activePositions.map((p) => p.market));
+  const managedOpenMarkets = new Set([
+    ...state.activePositions.map((p) => p.market),
+    ...state.autoPositions.map((p) => p.market)
+  ]);
   const unmanagedOrders = (account.openOrders || []).filter((o) =>
     !(o.side === "sell" && managedOpenMarkets.has(o.market))
   );
@@ -1172,7 +1747,7 @@ async function checkAndNotifyStrictSignals(env) {
   let aiReviewDoc = null;
   if (candidates.length) {
     try {
-      aiReviewDoc = await fetchLatestAiReview();
+      aiReviewDoc = await fetchLatestAiReview(env);
     } catch (error) {
       console.error("AI shadow review fetch failed:", error);
     }
@@ -1406,6 +1981,37 @@ async function checkAndNotifyStrictSignals(env) {
       continue;
     }
 
+    if (liveTradingEnabled(env)) {
+      try {
+        const autoResult = await executeAutomatedEntry(env, state, signal, live, signalsDoc);
+        if (autoResult.executed) {
+          state.notifiedKeys.push(key);
+          notified.push({
+            market: signal.market,
+            key,
+            action: "AUTO_BUY",
+            liveNetRR: live.netRR,
+            entryOrderId: autoResult.position.entryOrderId,
+            stopOrderId: autoResult.position.stopOrderId
+          });
+          continue;
+        }
+        blocked.push({ market: signal.market, reason: autoResult.reason || "auto execution skipped" });
+        if (autoResult.reason !== "signal already auto-processed") continue;
+      } catch (error) {
+        state.autoTradingHalted = true;
+        state.autoTradingHaltReason = `auto entry error: ${error.message}`;
+        blocked.push({ market: signal.market, reason: state.autoTradingHaltReason });
+        await sendTelegram(env, [
+          "⚠️ TRADING AUTO MIS EN PAUSE",
+          signal.market,
+          error.message,
+          "Aucun nouvel achat automatique ne sera tenté tant que l'état n'est pas vérifié."
+        ].join("\n"));
+        continue;
+      }
+    }
+
     const preAlertInfo = preAlertLeadByMarket.get(signal.market) || null;
     const rehearsalExpiresAtMs = nowMs + ALERT_RESERVATION_MIN * 60000;
     const rehearsalUrl = await makeRehearsalUrl(env, key, signal.market, rehearsalExpiresAtMs);
@@ -1518,6 +2124,8 @@ async function checkAndNotifyStrictSignals(env) {
   state.preAlerts = state.preAlerts.slice(-50);
   state.preAlertHistory = state.preAlertHistory.slice(-200);
   state.signalValidityWindows = state.signalValidityWindows.slice(-200);
+  state.autoExecutionKeys = state.autoExecutionKeys.slice(-500);
+  state.autoTradeHistory = state.autoTradeHistory.slice(-500);
   state.reactionMetrics = summarizeReactionMetrics(state);
   state.updatedAt = new Date().toISOString();
   await publishJsonToRepo({
@@ -1539,6 +2147,11 @@ async function checkAndNotifyStrictSignals(env) {
     activePositions: state.activePositions.map((p) => p.market),
     pendingRecommendations: state.pendingRecommendations.map((p) => p.market),
     preAlerts: state.preAlerts.map((p) => p.market),
+    autoPositions: state.autoPositions.map((p) => p.market),
+    autoManagementEvents,
+    liveTradingEnabled: liveTradingEnabled(env),
+    autoTradingHalted: state.autoTradingHalted,
+    autoTradingHaltReason: state.autoTradingHaltReason,
     reactionMetrics: state.reactionMetrics
   };
 }
@@ -1571,7 +2184,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.18",
+        "User-Agent": "bitvavo-collector/2.19",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -1607,7 +2220,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.18",
+          version: "2.19",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -1619,7 +2232,14 @@ export default {
             maxEntryCeiling: true,
             buyValidityMeasurement: true,
             executionRehearsal: true,
-            liveOrderSubmission: false,
+            liveOrderSubmission: liveTradingEnabled(env),
+            liveTradingConfigured: liveTradingCredentialsConfigured(env),
+            liveTradingMaxPositions: AUTO_MAX_POSITIONS,
+            liveTradingMaxNotionalEur: AUTO_MAX_NOTIONAL_EUR,
+            liveTradingDailyLossLimitEur: AUTO_DAILY_LOSS_LIMIT_EUR,
+            liveTradingMaxSignalAgeSec: AUTO_SIGNAL_MAX_AGE_SEC,
+            exchangeProtectiveStop: true,
+            workerManagedTakeProfit: true,
             strictEngineModified: false
           },
           routes: {
@@ -1628,19 +2248,23 @@ export default {
             privateSync: "/sync-private (POST, X-Private-Sync-Key required)",
             alertCheck: "/alert-check (POST, X-Alert-Key required)",
             telegramTest: "/telegram-test (POST, X-Alert-Key required)",
-            rehearsal: "/rehearse (signed one-time-style link from Telegram BUY alert)"
+            rehearsal: "/rehearse (signed one-time-style link from Telegram BUY alert)",
+            autoManage: "/auto-manage (POST, X-Alert-Key required)"
           },
           scheduledHandler: true,
           recommendedCrons: {
             snapshot: "*/5 * * * *",
             alertFallback: "2-57/5 * * * *",
+            autoManage: "* * * * *",
             privateSync: "3,18,33,48 * * * *"
           },
           privateAccountSyncConfigured: Boolean(env?.PRIVATE_GITHUB_REPO && env?.PRIVATE_GITHUB_TOKEN),
           privateManualSyncConfigured: Boolean(env?.PRIVATE_SYNC_KEY),
           telegramAlertsConfigured: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID),
           manualAlertCheckConfigured: Boolean(env?.ALERT_TRIGGER_KEY),
-          githubSnapshotDispatchConfigured: Boolean(env?.GITHUB_TOKEN)
+          githubSnapshotDispatchConfigured: Boolean(env?.GITHUB_TOKEN),
+          liveTradingCredentialsConfigured: liveTradingCredentialsConfigured(env),
+          liveTradingEnabled: liveTradingEnabled(env)
         });
       }
 
@@ -1649,6 +2273,20 @@ export default {
           return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
         }
         return handleExecutionRehearsal(env, url);
+      }
+
+      if (url.pathname === "/auto-manage") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "ALERT_TRIGGER_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Alert-Key");
+        if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await manageAutomatedPositionsOnly(env));
       }
 
       if (url.pathname === "/alert-check") {
@@ -1676,7 +2314,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.18 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.19 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
@@ -1773,6 +2411,17 @@ export default {
         ctx.waitUntil(
           checkAndNotifyStrictSignals(env).catch((error) => {
             console.error("Scheduled strict Telegram alert check failed:", error);
+          })
+        );
+      }
+      return;
+    }
+
+    if (cron === "* * * * *") {
+      if (liveTradingCredentialsConfigured(env)) {
+        ctx.waitUntil(
+          manageAutomatedPositionsOnly(env).catch((error) => {
+            console.error("Scheduled automated-position manager failed:", error);
           })
         );
       }
