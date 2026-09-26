@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.19",
+      "User-Agent": "bitvavo-collector/2.20",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -109,13 +109,59 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
   return data;
 }
 
+async function runLiveCredentialCheck(env) {
+  const checkedAt = new Date().toISOString();
+
+  if (!liveTradingCredentialsConfigured(env)) {
+    return {
+      ok: false,
+      checkedAt,
+      credentialsConfigured: false,
+      balanceRead: false,
+      openOrdersRead: false,
+      orderSubmitted: false,
+      reason: "Dedicated live credentials are not configured"
+    };
+  }
+
+  try {
+    const balances = await livePrivateJson(env, "GET", "/balance");
+    const openOrders = await livePrivateJson(env, "GET", "/ordersOpen", {
+      query: { market: "BTC-EUR" }
+    });
+
+    return {
+      ok: true,
+      checkedAt,
+      credentialsConfigured: true,
+      balanceRead: Array.isArray(balances),
+      openOrdersRead: Array.isArray(openOrders),
+      operatorIdValid: Number.isInteger(Number(env?.LIVE_TRADING_OPERATOR_ID)),
+      liveTradingEnabled: liveTradingEnabled(env),
+      orderSubmitted: false
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      checkedAt,
+      credentialsConfigured: true,
+      balanceRead: false,
+      openOrdersRead: false,
+      operatorIdValid: Number.isInteger(Number(env?.LIVE_TRADING_OPERATOR_ID)),
+      liveTradingEnabled: liveTradingEnabled(env),
+      orderSubmitted: false,
+      reason: error?.message || String(error)
+    };
+  }
+}
+
 async function getJson(url, env, { auth = true } = {}) {
   const parsed = new URL(url);
   const path = parsed.pathname + parsed.search;
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.19"
+    "User-Agent": "bitvavo-collector/2.20"
   };
 
   if (auth) {
@@ -211,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.19" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.20" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -388,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.19"
+    "User-Agent": "bitvavo-collector/2.20"
   };
 
   let sha;
@@ -440,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.19"
+      "User-Agent": "bitvavo-collector/2.20"
     }
   });
   if (response.status === 404) return null;
@@ -544,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.19"
+    "User-Agent": "bitvavo-collector/2.20"
   };
 
   let sha;
@@ -607,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.19"
+          "User-Agent": "bitvavo-collector/2.20"
         }
       }
     );
@@ -619,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.19" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.20" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -2184,7 +2230,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.19",
+        "User-Agent": "bitvavo-collector/2.20",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2220,7 +2266,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.19",
+          version: "2.20",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2249,7 +2295,8 @@ export default {
             alertCheck: "/alert-check (POST, X-Alert-Key required)",
             telegramTest: "/telegram-test (POST, X-Alert-Key required)",
             rehearsal: "/rehearse (signed one-time-style link from Telegram BUY alert)",
-            autoManage: "/auto-manage (POST, X-Alert-Key required)"
+            autoManage: "/auto-manage (POST, X-Alert-Key required)",
+            liveCredentialCheck: "/live-credential-check (POST, X-Alert-Key required; GET-only Bitvavo self-test)"
           },
           scheduledHandler: true,
           recommendedCrons: {
@@ -2273,6 +2320,20 @@ export default {
           return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
         }
         return handleExecutionRehearsal(env, url);
+      }
+
+      if (url.pathname === "/live-credential-check") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "ALERT_TRIGGER_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Alert-Key");
+        if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await runLiveCredentialCheck(env));
       }
 
       if (url.pathname === "/auto-manage") {
@@ -2314,7 +2375,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.19 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.20 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
