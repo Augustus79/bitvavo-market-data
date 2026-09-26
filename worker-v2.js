@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.25",
+      "User-Agent": "bitvavo-collector/2.26",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.25"
+    "User-Agent": "bitvavo-collector/2.26"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.25" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.26" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.25"
+    "User-Agent": "bitvavo-collector/2.26"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.25"
+      "User-Agent": "bitvavo-collector/2.26"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.25"
+    "User-Agent": "bitvavo-collector/2.26"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.25"
+          "User-Agent": "bitvavo-collector/2.26"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.25" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.26" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -1185,6 +1185,10 @@ function upsertAutoAttempt(state, attempt) {
   state.autoAttemptHistory = Array.isArray(state.autoAttemptHistory) ? state.autoAttemptHistory : [];
   const idx = state.autoAttemptHistory.findIndex((a) => a?.key === attempt?.key);
   const previous = idx >= 0 ? state.autoAttemptHistory[idx] : null;
+  const terminalSubmitted = Boolean(previous?.orderSubmitted) &&
+    ["SUBMITTED", "NOT_FILLED", "FILLED", "ERROR"].includes(previous?.outcome);
+  if (terminalSubmitted && attempt?.outcome === "BLOCKED") return previous;
+
   const merged = {
     ...(previous || {}),
     ...attempt,
@@ -1239,6 +1243,12 @@ async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
 
   if (!liveTradingEnabled(env)) return block("live trading disabled");
 
+  // Never downgrade a previously submitted/processed attempt on the next
+  // alert-check cycle (for example when a prior API error has halted trading).
+  if (state.autoExecutionKeys.includes(key)) {
+    return { executed: false, reason: "signal already auto-processed" };
+  }
+
   const ageSec = num(baseAttempt.signalAgeSec);
   if (!(ageSec !== null && ageSec >= 0 && ageSec <= AUTO_SIGNAL_MAX_AGE_SEC)) {
     return block(`signal too old for auto execution (${ageSec === null ? "n/a" : ageSec.toFixed(1)}s)`);
@@ -1252,12 +1262,6 @@ async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
     state.autoTradingHalted = true;
     state.autoTradingHaltReason = `daily realized loss limit reached (€${fmt(dailyPnl, 2)})`;
     return block(state.autoTradingHaltReason, { dailyRealizedPnlEur: dailyPnl });
-  }
-
-  // A previously processed key already has its final telemetry row. Do not
-  // overwrite NOT_FILLED/FILLED/ERROR with a later duplicate-check outcome.
-  if (state.autoExecutionKeys.includes(key)) {
-    return { executed: false, reason: "signal already auto-processed" };
   }
 
   let rules;
@@ -2719,7 +2723,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.25",
+        "User-Agent": "bitvavo-collector/2.26",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2775,7 +2779,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.25",
+          version: "2.26",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2902,7 +2906,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.25 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.26 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
