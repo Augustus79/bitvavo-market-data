@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.24",
+      "User-Agent": "bitvavo-collector/2.25",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.24"
+    "User-Agent": "bitvavo-collector/2.25"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.24" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.25" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.24"
+    "User-Agent": "bitvavo-collector/2.25"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.24"
+      "User-Agent": "bitvavo-collector/2.25"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.24"
+    "User-Agent": "bitvavo-collector/2.25"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.24"
+          "User-Agent": "bitvavo-collector/2.25"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.24" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.25" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -686,7 +686,7 @@ async function fetchLatestAiReview(env) {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.7",
+    version: "1.8",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
@@ -715,7 +715,7 @@ function heldSymbols(account) {
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.7";
+  state.version = "1.8";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys.slice(-500) : [];
   state.autoDryRunKeys = Array.isArray(state.autoDryRunKeys) ? state.autoDryRunKeys.slice(-500) : [];
@@ -725,6 +725,26 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory.slice(-500) : [];
   state.autoTradingHalted = Boolean(state.autoTradingHalted);
   state.autoTradingHaltReason = state.autoTradingHaltReason || null;
+
+  const previousStateVersion = String(rawState?.version || "");
+  const legacyPricePrecisionHalt =
+    previousStateVersion === "1.7" &&
+    state.autoTradingHalted &&
+    String(state.autoTradingHaltReason || "").includes("Field 'price' has too many decimal digits");
+  if (
+    legacyPricePrecisionHalt &&
+    state.autoPositions.length === 0 &&
+    state.activePositions.length === 0 &&
+    heldSymbols(account).size === 0 &&
+    !(account?.openOrders || []).length
+  ) {
+    state.autoTradingHalted = false;
+    state.autoTradingHaltReason = null;
+    state.lastAutoRecovery = {
+      recoveredAt: new Date(nowMs).toISOString(),
+      reason: "cleared known v2.24 price-serialization halt after confirming no holdings/open orders"
+    };
+  }
   state.pendingRecommendations = Array.isArray(state.pendingRecommendations) ? state.pendingRecommendations : [];
   state.activePositions = Array.isArray(state.activePositions) ? state.activePositions : [];
   state.notificationHistory = Array.isArray(state.notificationHistory) ? state.notificationHistory.slice(-200) : [];
@@ -789,6 +809,37 @@ function ceilTick(value, tickSize) {
   const tick = num(tickSize);
   if (!(tick > 0)) return Number(value);
   return Math.ceil((Number(value) - 1e-12) / tick) * tick;
+}
+
+function decimalPlaces(value) {
+  const raw = String(value).toLowerCase();
+  if (!raw.includes("e")) {
+    const [, frac = ""] = raw.split(".");
+    return frac.length;
+  }
+  const [coefficient, exponentRaw] = raw.split("e");
+  const exponent = Number(exponentRaw);
+  const [, frac = ""] = coefficient.split(".");
+  return Math.max(0, frac.length - exponent);
+}
+
+function apiFixed(value, decimals) {
+  const x = Number(value);
+  const d = Math.max(0, Math.min(18, Number(decimals) || 0));
+  if (!Number.isFinite(x)) throw new Error("Cannot serialize non-finite decimal value");
+  return x.toFixed(d);
+}
+
+function apiPrice(value, rules) {
+  const explicit = Number(rules?.priceDecimals);
+  const decimals = Number.isInteger(explicit) && explicit >= 0
+    ? explicit
+    : decimalPlaces(rules?.tickSize);
+  return apiFixed(value, decimals);
+}
+
+function apiAmount(value, rules) {
+  return apiFixed(value, rules?.quantityDecimals);
 }
 
 function orderFilledAmount(order) {
@@ -887,8 +938,8 @@ async function placeProtectiveStop(env, positionSeed, market, amount, stop, rule
       market,
       side: "sell",
       orderType: "stopLoss",
-      amount: String(quantity),
-      triggerAmount: String(triggerAmount),
+      amount: apiAmount(quantity, rules),
+      triggerAmount: apiPrice(triggerAmount, rules),
       triggerType: "price",
       triggerReference: "lastTrade"
     },
@@ -905,7 +956,7 @@ async function emergencyMarketExit(env, positionSeed, market, amount, rules) {
       market,
       side: "sell",
       orderType: "market",
-      amount: String(quantity)
+      amount: apiAmount(quantity, rules)
     },
     `${positionSeed}|emergency-exit`
   );
@@ -1103,7 +1154,7 @@ async function runHistoricalDryRunReplay(env) {
 
   const state = {
     ...emptyLiveAlertState(),
-    version: "1.7",
+    version: "1.8",
     autoPositions: [],
     autoTradeHistory: [],
     autoTradingHalted: false,
@@ -1228,7 +1279,9 @@ async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
   const worstCaseQuote = quantity * limitPrice;
   const planned = {
     limitPrice,
+    limitPriceApi: apiPrice(limitPrice, rules),
     quantity,
+    quantityApi: apiAmount(quantity, rules),
     notionalEur: worstCaseQuote,
     marketTickSize: num(rules.tickSize),
     marketQuantityDecimals: Number(rules.quantityDecimals),
@@ -1263,8 +1316,8 @@ async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
         market: signal.market,
         side: "buy",
         orderType: "limit",
-        amount: String(quantity),
-        price: String(limitPrice),
+        amount: apiAmount(quantity, rules),
+        price: apiPrice(limitPrice, rules),
         timeInForce: "FOK",
         postOnly: false
       },
@@ -1498,7 +1551,7 @@ async function manageAutomatedPositions(env, state) {
             market: position.market,
             side: "sell",
             orderType: "market",
-            amount: String(quantity)
+            amount: apiAmount(quantity, rules)
           },
           `${position.key}|target-exit`
         );
@@ -1584,7 +1637,7 @@ async function manageAutomatedPositionsOnly(env) {
     token: env.PRIVATE_GITHUB_TOKEN
   });
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.7";
+  state.version = "1.8";
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys : [];
   state.autoAttemptHistory = Array.isArray(state.autoAttemptHistory) ? state.autoAttemptHistory.slice(-1000) : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
@@ -2666,7 +2719,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.24",
+        "User-Agent": "bitvavo-collector/2.25",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2693,6 +2746,26 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
   };
 }
 
+if (
+  typeof process !== "undefined" &&
+  process?.env?.BITVAVO_WORKER_SELF_TEST === "1"
+) {
+  const rules = { tickSize: 0.000001, quantityDecimals: 8 };
+  const price = floorTick(0.043928106338708924, rules.tickSize);
+  const quantity = floorDecimals(100 / price, rules.quantityDecimals);
+  if (apiPrice(price, rules) !== "0.043928") {
+    throw new Error(`precision self-test failed for price: ${apiPrice(price, rules)}`);
+  }
+  if (!/^\d+\.\d{8}$/.test(apiAmount(quantity, rules))) {
+    throw new Error(`precision self-test failed for amount: ${apiAmount(quantity, rules)}`);
+  }
+  const stop = ceilTick(0.043001000000000004, rules.tickSize);
+  if (apiPrice(stop, rules).split(".")[1]?.length !== 6) {
+    throw new Error(`precision self-test failed for stop: ${apiPrice(stop, rules)}`);
+  }
+  console.log("worker live-order decimal serialization self-test: OK");
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -2702,7 +2775,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.24",
+          version: "2.25",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2716,6 +2789,7 @@ export default {
             executionRehearsal: true,
             automaticExecutionDryRun: !liveTradingEnabled(env) && liveTradingCredentialsConfigured(env),
             autoAttemptHistory: true,
+            exactDecimalOrderSerialization: true,
             liveOrderSubmission: liveTradingEnabled(env),
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
@@ -2828,7 +2902,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.24 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.25 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
