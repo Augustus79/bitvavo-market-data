@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.20",
+      "User-Agent": "bitvavo-collector/2.21",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.20"
+    "User-Agent": "bitvavo-collector/2.21"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.20" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.21" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.20"
+    "User-Agent": "bitvavo-collector/2.21"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.20"
+      "User-Agent": "bitvavo-collector/2.21"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.20"
+    "User-Agent": "bitvavo-collector/2.21"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.20"
+          "User-Agent": "bitvavo-collector/2.21"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.20" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.21" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -697,6 +697,8 @@ function emptyLiveAlertState() {
     signalValidityWindows: [],
     reactionMetrics: null,
     autoExecutionKeys: [],
+    autoDryRunKeys: [],
+    autoDryRunHistory: [],
     autoPositions: [],
     autoTradeHistory: [],
     autoTradingHalted: false,
@@ -712,9 +714,11 @@ function heldSymbols(account) {
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.5";
+  state.version = "1.6";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys.slice(-500) : [];
+  state.autoDryRunKeys = Array.isArray(state.autoDryRunKeys) ? state.autoDryRunKeys.slice(-500) : [];
+  state.autoDryRunHistory = Array.isArray(state.autoDryRunHistory) ? state.autoDryRunHistory.slice(-500) : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
   state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory.slice(-500) : [];
   state.autoTradingHalted = Boolean(state.autoTradingHalted);
@@ -931,6 +935,136 @@ function autoExitTelegram(trade) {
     `Sortie: €${fmt(trade.avgExitPrice)}`,
     `Quantité: ${fmt(trade.quantity, 8)}`
   ].join("\n");
+}
+
+async function simulateAutomatedEntry(env, state, signal, live, signalsDoc) {
+  const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
+  const signalMs = Date.parse(signalsDoc?.snapshotCollectedAt);
+  const ageSec = Number.isFinite(signalMs) ? (Date.now() - signalMs) / 1000 : Infinity;
+
+  const result = {
+    key,
+    simulatedAt: new Date().toISOString(),
+    signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+    market: signal.market,
+    family: signal.family,
+    tradeGrade: signal.tradeGrade,
+    score: signal.score,
+    eligible: false,
+    orderSubmitted: false,
+    liveTradingEnabled: liveTradingEnabled(env),
+    signalAgeSec: Number.isFinite(ageSec) ? Number(ageSec.toFixed(2)) : null,
+    entry: null,
+    protectiveStop: null,
+    takeProfit: null,
+    reason: null
+  };
+
+  if (!(ageSec >= 0 && ageSec <= AUTO_SIGNAL_MAX_AGE_SEC)) {
+    result.reason = `signal too old for auto execution (${Number.isFinite(ageSec) ? ageSec.toFixed(1) : "n/a"}s)`;
+    return result;
+  }
+  if (state.autoTradingHalted) {
+    result.reason = state.autoTradingHaltReason || "auto trading halted";
+    return result;
+  }
+  if ((state.autoPositions || []).length >= AUTO_MAX_POSITIONS) {
+    result.reason = "auto position limit reached";
+    return result;
+  }
+
+  const dailyPnl = autoDailyRealizedPnlEur(state);
+  if (dailyPnl <= -AUTO_DAILY_LOSS_LIMIT_EUR) {
+    result.reason = `daily realized loss limit reached (€${fmt(dailyPnl, 2)})`;
+    return result;
+  }
+
+  const rules = await getMarketRules(signal.market, env);
+  const limitPrice = floorTick(live.maxEntry, rules.tickSize);
+  const notionalCap = Math.min(AUTO_MAX_NOTIONAL_EUR, live.amountEur);
+  const quantity = floorDecimals(notionalCap / limitPrice, rules.quantityDecimals);
+  const worstCaseQuote = quantity * limitPrice;
+  const stopTrigger = ceilTick(live.stop, rules.tickSize);
+  const target = floorTick(live.target, rules.tickSize);
+  const minQuote = num(rules.minOrderInQuoteAsset) || 0;
+
+  result.marketRules = {
+    status: rules.status,
+    tickSize: num(rules.tickSize),
+    quantityDecimals: Number(rules.quantityDecimals),
+    minOrderInQuoteAsset: minQuote
+  };
+  result.entry = {
+    method: "POST /v2/order",
+    side: "buy",
+    orderType: "limit",
+    timeInForce: "FOK",
+    amount: quantity,
+    limitPrice,
+    worstCaseQuoteEur: worstCaseQuote,
+    liveAsk: live.entry,
+    maxEntry: live.maxEntry,
+    liveNetRR: live.netRR
+  };
+  result.protectiveStop = {
+    method: "POST /v2/order after confirmed entry fill",
+    side: "sell",
+    orderType: "stopLoss",
+    amount: quantity,
+    triggerAmount: stopTrigger,
+    triggerType: "price",
+    triggerReference: "lastTrade"
+  };
+  result.takeProfit = {
+    mode: "worker-managed",
+    triggerBidAtOrAbove: target,
+    action: "cancel protective stop then market-sell available position",
+    checkCadence: "1 minute"
+  };
+  result.risk = {
+    plannedRiskEur: live.riskEur,
+    maxNotionalEur: AUTO_MAX_NOTIONAL_EUR,
+    maxPositions: AUTO_MAX_POSITIONS,
+    dailyLossLimitEur: AUTO_DAILY_LOSS_LIMIT_EUR
+  };
+
+  if (!(limitPrice >= live.entry && limitPrice <= live.maxEntry + 1e-12)) {
+    result.reason = "rounded limit price no longer valid";
+    return result;
+  }
+  if (!(quantity > 0 && worstCaseQuote >= minQuote)) {
+    result.reason = "order below market minimum";
+    return result;
+  }
+  if (!(stopTrigger > 0 && stopTrigger < limitPrice && target > limitPrice)) {
+    result.reason = "rounded stop/target geometry invalid";
+    return result;
+  }
+
+  result.eligible = true;
+  result.reason = "would submit FOK limit entry, then exchange-side stop; no order submitted in dry-run";
+  return result;
+}
+
+function autoDryRunTelegram(dryRun) {
+  if (!dryRun) return [];
+  if (!dryRun.eligible) {
+    return [
+      "",
+      "🧪 DRY-RUN AUTO: BLOQUÉ",
+      `Raison: ${dryRun.reason}`,
+      "Aucun ordre envoyé."
+    ];
+  }
+  return [
+    "",
+    "🧪 DRY-RUN AUTO — ordre qui aurait été envoyé",
+    `BUY LIMIT FOK: ${fmt(dryRun.entry.amount, 8)} ${dryRun.market.replace(/-EUR$/, "")} @ max €${fmt(dryRun.entry.limitPrice)}`,
+    `Notional max: ~€${fmt(dryRun.entry.worstCaseQuoteEur, 2)}`,
+    `STOP LOSS ensuite: trigger €${fmt(dryRun.protectiveStop.triggerAmount)}`,
+    `TAKE PROFIT Worker: bid ≥ €${fmt(dryRun.takeProfit.triggerBidAtOrAbove)}`,
+    "Aucun ordre envoyé — LIVE_TRADING_ENABLED=false."
+  ];
 }
 
 async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
@@ -1226,7 +1360,7 @@ async function manageAutomatedPositionsOnly(env) {
     token: env.PRIVATE_GITHUB_TOKEN
   });
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.5";
+  state.version = "1.6";
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
   state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory : [];
@@ -1449,7 +1583,7 @@ function aiShadowSection(aiReviewDoc, signal, signalsDoc) {
   return lines;
 }
 
-function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null, preAlertInfo = null) {
+function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null, preAlertInfo = null, autoDryRun = null) {
   const preAlertLead = preAlertInfo?.leadTimeToBuySec !== null && preAlertInfo?.leadTimeToBuySec !== undefined
     ? `Pré-alerte envoyée ~${fmt(preAlertInfo.leadTimeToBuySec / 60, 1)} min avant ce BUY.`
     : null;
@@ -1470,6 +1604,7 @@ function telegramMessage(signal, live, signalsDoc, aiReviewDoc = null, preAlertI
     `R/R net live: ${fmt(live.netRR, 2)}`,
     `Coûts A/R estimés: ${fmt(live.roundTripCostPct, 2)}%`,
     ...(preAlertLead ? ["", `⏱ ${preAlertLead}`] : []),
+    ...autoDryRunTelegram(autoDryRun),
     ...aiShadowSection(aiReviewDoc, signal, signalsDoc),
     "",
     "ACTION: vérifier le prix dans Bitvavo Pro. Si le prix d'achat est AU-DESSUS du plafond affiché, NE PAS ENTRER. Le plafond dépend du spread/coût live et reste indicatif jusqu'à l'exécution. L'audit IA est informatif et ne modifie pas les règles déterministes."
@@ -2027,6 +2162,36 @@ async function checkAndNotifyStrictSignals(env) {
       continue;
     }
 
+    let autoDryRun = null;
+
+    if (!liveTradingEnabled(env) && liveTradingCredentialsConfigured(env)) {
+      try {
+        if (!state.autoDryRunKeys.includes(key)) {
+          autoDryRun = await simulateAutomatedEntry(env, state, signal, live, signalsDoc);
+          state.autoDryRunKeys.push(key);
+          state.autoDryRunHistory.push(autoDryRun);
+          state.autoDryRunKeys = state.autoDryRunKeys.slice(-500);
+          state.autoDryRunHistory = state.autoDryRunHistory.slice(-500);
+        } else {
+          autoDryRun = [...state.autoDryRunHistory].reverse().find((d) => d.key === key) || null;
+        }
+      } catch (error) {
+        autoDryRun = {
+          key,
+          simulatedAt: new Date().toISOString(),
+          signalSnapshotAt: signalsDoc.snapshotCollectedAt,
+          market: signal.market,
+          eligible: false,
+          orderSubmitted: false,
+          reason: `dry-run error: ${error.message}`
+        };
+        state.autoDryRunKeys.push(key);
+        state.autoDryRunHistory.push(autoDryRun);
+        state.autoDryRunKeys = state.autoDryRunKeys.slice(-500);
+        state.autoDryRunHistory = state.autoDryRunHistory.slice(-500);
+      }
+    }
+
     if (liveTradingEnabled(env)) {
       try {
         const autoResult = await executeAutomatedEntry(env, state, signal, live, signalsDoc);
@@ -2063,7 +2228,7 @@ async function checkAndNotifyStrictSignals(env) {
     const rehearsalUrl = await makeRehearsalUrl(env, key, signal.market, rehearsalExpiresAtMs);
     const telegram = await sendTelegram(
       env,
-      telegramMessage(signal, live, signalsDoc, aiReviewDoc, preAlertInfo),
+      telegramMessage(signal, live, signalsDoc, aiReviewDoc, preAlertInfo, autoDryRun),
       {
         replyMarkup: rehearsalUrl
           ? {
@@ -2171,6 +2336,8 @@ async function checkAndNotifyStrictSignals(env) {
   state.preAlertHistory = state.preAlertHistory.slice(-200);
   state.signalValidityWindows = state.signalValidityWindows.slice(-200);
   state.autoExecutionKeys = state.autoExecutionKeys.slice(-500);
+  state.autoDryRunKeys = state.autoDryRunKeys.slice(-500);
+  state.autoDryRunHistory = state.autoDryRunHistory.slice(-500);
   state.autoTradeHistory = state.autoTradeHistory.slice(-500);
   state.reactionMetrics = summarizeReactionMetrics(state);
   state.updatedAt = new Date().toISOString();
@@ -2194,6 +2361,7 @@ async function checkAndNotifyStrictSignals(env) {
     pendingRecommendations: state.pendingRecommendations.map((p) => p.market),
     preAlerts: state.preAlerts.map((p) => p.market),
     autoPositions: state.autoPositions.map((p) => p.market),
+    latestAutoDryRun: state.autoDryRunHistory.length ? state.autoDryRunHistory[state.autoDryRunHistory.length - 1] : null,
     autoManagementEvents,
     liveTradingEnabled: liveTradingEnabled(env),
     autoTradingHalted: state.autoTradingHalted,
@@ -2230,7 +2398,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.20",
+        "User-Agent": "bitvavo-collector/2.21",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2266,7 +2434,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.20",
+          version: "2.21",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2278,6 +2446,7 @@ export default {
             maxEntryCeiling: true,
             buyValidityMeasurement: true,
             executionRehearsal: true,
+            automaticExecutionDryRun: !liveTradingEnabled(env) && liveTradingCredentialsConfigured(env),
             liveOrderSubmission: liveTradingEnabled(env),
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
@@ -2375,7 +2544,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.20 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.21 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
