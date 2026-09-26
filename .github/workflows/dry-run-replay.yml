@@ -1,0 +1,35 @@
+name: One-off dry-run replay
+
+on:
+  push:
+    paths:
+      - ".github/workflows/dry-run-replay.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Replay recorded SUI strict BUY
+        shell: bash
+        env:
+          ALERT_TRIGGER_KEY: ${{ secrets.ALERT_TRIGGER_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ALERT_TRIGGER_KEY"
+          response="$(curl --fail-with-body --silent --show-error             -X POST             -H "X-Alert-Key: $ALERT_TRIGGER_KEY"             "https://bitvavo-collector.nicolasbonnin79.workers.dev/dry-run-replay")"
+          echo "$response" | python -m json.tool
+          RESPONSE="$response" python - <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["RESPONSE"])
+          assert data.get("ok") is True, data
+          assert data.get("orderSubmitted") is False, data
+          result = data.get("result") or {}
+          assert result.get("orderSubmitted") is False, data
+          assert result.get("historicalReplay") is True, data
+          print("DRY_RUN_REPLAY_VALIDATION=OK")
+          print("eligible=", result.get("eligible"))
+          print("reason=", result.get("reason"))
+          PY
