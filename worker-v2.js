@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.22",
+      "User-Agent": "bitvavo-collector/2.23",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.22"
+    "User-Agent": "bitvavo-collector/2.23"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.22" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.23" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.22"
+    "User-Agent": "bitvavo-collector/2.23"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.22"
+      "User-Agent": "bitvavo-collector/2.23"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.22"
+    "User-Agent": "bitvavo-collector/2.23"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.22"
+          "User-Agent": "bitvavo-collector/2.23"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.22" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.23" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -824,7 +824,7 @@ async function deterministicUuid(value) {
 }
 
 async function getMarketRules(market, env) {
-  const data = await getJson(`${BITVAVO}/markets?market=${encodeURIComponent(market)}`, env, { auth: false });
+  const data = await getJson(`${BITVAVO}/markets?market=${encodeURIComponent(market)}`, env, { auth: true });
   const rules = Array.isArray(data) ? data[0] : data;
   if (!rules || rules.market !== market || rules.status !== "trading") {
     throw new Error(`Market rules unavailable/not trading for ${market}`);
@@ -2459,7 +2459,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.22",
+        "User-Agent": "bitvavo-collector/2.23",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2495,7 +2495,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.22",
+          version: "2.23",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2620,7 +2620,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.22 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.23 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
