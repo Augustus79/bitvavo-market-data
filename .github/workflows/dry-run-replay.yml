@@ -17,12 +17,18 @@ jobs:
         env:
           ALERT_TRIGGER_KEY: ${{ secrets.ALERT_TRIGGER_KEY }}
         run: |
-          set -euo pipefail
+          set -u
           test -n "$ALERT_TRIGGER_KEY"
-          response="$(curl --fail-with-body --silent --show-error             -X POST             -H "X-Alert-Key: $ALERT_TRIGGER_KEY"             "https://bitvavo-collector.nicolasbonnin79.workers.dev/dry-run-replay")"
-          echo "$response" | python -m json.tool
-          RESPONSE="$response" python - <<'PY'
-          import json, os, sys
+          body_file="$(mktemp)"
+          status="$(curl --silent --show-error             -o "$body_file"             -w "%{http_code}"             -X POST             -H "X-Alert-Key: $ALERT_TRIGGER_KEY"             "https://bitvavo-collector.nicolasbonnin79.workers.dev/dry-run-replay")"
+          echo "HTTP_STATUS=$status"
+          cat "$body_file"
+          echo
+          if [ "$status" != "200" ]; then
+            exit 1
+          fi
+          RESPONSE="$(cat "$body_file")" python - <<'PY'
+          import json, os
           data = json.loads(os.environ["RESPONSE"])
           assert data.get("ok") is True, data
           assert data.get("orderSubmitted") is False, data
