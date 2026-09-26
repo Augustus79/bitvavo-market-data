@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.21",
+      "User-Agent": "bitvavo-collector/2.22",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.21"
+    "User-Agent": "bitvavo-collector/2.22"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.21" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.22" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.21"
+    "User-Agent": "bitvavo-collector/2.22"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.21"
+      "User-Agent": "bitvavo-collector/2.22"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.21"
+    "User-Agent": "bitvavo-collector/2.22"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.21"
+          "User-Agent": "bitvavo-collector/2.22"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.21" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.22" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -937,7 +937,7 @@ function autoExitTelegram(trade) {
   ].join("\n");
 }
 
-async function simulateAutomatedEntry(env, state, signal, live, signalsDoc) {
+async function simulateAutomatedEntry(env, state, signal, live, signalsDoc, { allowHistorical = false } = {}) {
   const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
   const signalMs = Date.parse(signalsDoc?.snapshotCollectedAt);
   const ageSec = Number.isFinite(signalMs) ? (Date.now() - signalMs) / 1000 : Infinity;
@@ -960,10 +960,11 @@ async function simulateAutomatedEntry(env, state, signal, live, signalsDoc) {
     reason: null
   };
 
-  if (!(ageSec >= 0 && ageSec <= AUTO_SIGNAL_MAX_AGE_SEC)) {
+  if (!allowHistorical && !(ageSec >= 0 && ageSec <= AUTO_SIGNAL_MAX_AGE_SEC)) {
     result.reason = `signal too old for auto execution (${Number.isFinite(ageSec) ? ageSec.toFixed(1) : "n/a"}s)`;
     return result;
   }
+  if (allowHistorical) result.historicalReplay = true;
   if (state.autoTradingHalted) {
     result.reason = state.autoTradingHaltReason || "auto trading halted";
     return result;
@@ -1065,6 +1066,66 @@ function autoDryRunTelegram(dryRun) {
     `TAKE PROFIT Worker: bid ≥ €${fmt(dryRun.takeProfit.triggerBidAtOrAbove)}`,
     "Aucun ordre envoyé — LIVE_TRADING_ENABLED=false."
   ];
+}
+
+async function runHistoricalDryRunReplay(env) {
+  const fixture = {
+    id: "SUI-EUR|2026-09-26T10:40:48.354Z",
+    signal: {
+      market: "SUI-EUR",
+      action: "BUY",
+      setupState: "BUY",
+      family: "confirmed breakout",
+      tradeGrade: "A",
+      score: 10,
+      stop: 1.0288933928571429,
+      target: 1.06784,
+      suggestedRiskEur: 1.25
+    },
+    live: {
+      entry: 1.0367,
+      stop: 1.0288933928571429,
+      target: 1.06784,
+      riskEur: 1.25,
+      amountEur: 94.65027885152914,
+      quantity: 91.29958411452604,
+      netRR: 1.8446472278517407,
+      maxEntry: 1.0385767991344785,
+      entryHeadroomPct: 0.181035896062369
+    },
+    signalsDoc: {
+      snapshotCollectedAt: "2026-09-26T10:40:48.354Z",
+      btcRegime: "neutral"
+    }
+  };
+
+  const state = {
+    ...emptyLiveAlertState(),
+    version: "1.6",
+    autoPositions: [],
+    autoTradeHistory: [],
+    autoTradingHalted: false,
+    autoTradingHaltReason: null
+  };
+
+  const result = await simulateAutomatedEntry(
+    env,
+    state,
+    fixture.signal,
+    fixture.live,
+    fixture.signalsDoc,
+    { allowHistorical: true }
+  );
+
+  return {
+    ok: true,
+    mode: "historical-dry-run-replay",
+    fixture: fixture.id,
+    source: "Recorded SUI strict BUY from 2026-09-26T10:40:48.354Z",
+    orderSubmitted: false,
+    liveTradingEnabled: liveTradingEnabled(env),
+    result
+  };
 }
 
 async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
@@ -2398,7 +2459,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.21",
+        "User-Agent": "bitvavo-collector/2.22",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2434,7 +2495,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.21",
+          version: "2.22",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2465,7 +2526,8 @@ export default {
             telegramTest: "/telegram-test (POST, X-Alert-Key required)",
             rehearsal: "/rehearse (signed one-time-style link from Telegram BUY alert)",
             autoManage: "/auto-manage (POST, X-Alert-Key required)",
-            liveCredentialCheck: "/live-credential-check (POST, X-Alert-Key required; GET-only Bitvavo self-test)"
+            liveCredentialCheck: "/live-credential-check (POST, X-Alert-Key required; GET-only Bitvavo self-test)",
+            dryRunReplay: "/dry-run-replay (POST, X-Alert-Key required; historical SUI fixture; no order API calls)"
           },
           scheduledHandler: true,
           recommendedCrons: {
@@ -2489,6 +2551,20 @@ export default {
           return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
         }
         return handleExecutionRehearsal(env, url);
+      }
+
+      if (url.pathname === "/dry-run-replay") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
+        }
+        if (!env?.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "ALERT_TRIGGER_KEY not configured" }, 503);
+        }
+        const supplied = request.headers.get("X-Alert-Key");
+        if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
+          return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+        }
+        return jsonResponse(await runHistoricalDryRunReplay(env));
       }
 
       if (url.pathname === "/live-credential-check") {
@@ -2544,7 +2620,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.21 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.22 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
