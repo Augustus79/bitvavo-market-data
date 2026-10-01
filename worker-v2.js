@@ -90,7 +90,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.26",
+      "User-Agent": "bitvavo-collector/2.27",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +161,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.26"
+    "User-Agent": "bitvavo-collector/2.27"
   };
 
   if (auth) {
@@ -257,7 +257,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.26" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.27" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +434,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.26"
+    "User-Agent": "bitvavo-collector/2.27"
   };
 
   let sha;
@@ -486,7 +486,7 @@ async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.26"
+      "User-Agent": "bitvavo-collector/2.27"
     }
   });
   if (response.status === 404) return null;
@@ -590,7 +590,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.26"
+    "User-Agent": "bitvavo-collector/2.27"
   };
 
   let sha;
@@ -653,7 +653,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.26"
+          "User-Agent": "bitvavo-collector/2.27"
         }
       }
     );
@@ -665,7 +665,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.26" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.27" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -711,6 +711,73 @@ function heldSymbols(account) {
   return new Set((account?.balances || [])
     .filter((b) => b.symbol !== "EUR" && ((b.available || 0) > 0 || (b.inOrder || 0) > 0))
     .map((b) => b.symbol));
+}
+
+function classifyHoldingTradability(balance, ticker, rules) {
+  const available = Math.max(0, num(balance?.available) || 0);
+  const inOrder = Math.max(0, num(balance?.inOrder) || 0);
+  const amount = available + inOrder;
+  const executableBid = num(ticker?.bid);
+  const minOrderQuoteEur = num(rules?.minOrderInQuoteAsset);
+  const quoteValueEur =
+    amount > 0 && executableBid !== null && executableBid > 0
+      ? amount * executableBid
+      : null;
+
+  const isNonTradableDust =
+    amount > 0 &&
+    quoteValueEur !== null &&
+    minOrderQuoteEur !== null &&
+    minOrderQuoteEur > 0 &&
+    quoteValueEur < minOrderQuoteEur;
+
+  return {
+    symbol: balance?.symbol || null,
+    amount,
+    executableBid,
+    quoteValueEur,
+    minOrderQuoteEur,
+    isNonTradableDust
+  };
+}
+
+async function classifyUnknownHeldSymbols(account, symbols, env) {
+  const balancesBySymbol = new Map(
+    (account?.balances || []).map((balance) => [balance.symbol, balance])
+  );
+  const materialSymbols = [];
+  const dustHoldings = [];
+  const valuationErrors = [];
+
+  for (const symbol of symbols || []) {
+    const balance = balancesBySymbol.get(symbol);
+    if (!balance) {
+      materialSymbols.push(symbol);
+      valuationErrors.push({ symbol, reason: "balance missing during reconciliation" });
+      continue;
+    }
+
+    const market = `${symbol}-EUR`;
+    try {
+      const [rules, tickerRaw] = await Promise.all([
+        getMarketRules(market, env),
+        getJson(`${BITVAVO}/ticker/24h?market=${encodeURIComponent(market)}`, env)
+      ]);
+      const ticker = compactTicker(Array.isArray(tickerRaw) ? tickerRaw[0] : tickerRaw);
+      const classification = classifyHoldingTradability(balance, ticker, rules);
+
+      if (classification.isNonTradableDust) {
+        dustHoldings.push({ market, ...classification });
+      } else {
+        materialSymbols.push(symbol);
+      }
+    } catch (error) {
+      materialSymbols.push(symbol);
+      valuationErrors.push({ symbol, reason: error.message });
+    }
+  }
+
+  return { materialSymbols, dustHoldings, valuationErrors };
 }
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
@@ -2178,6 +2245,12 @@ async function checkAndNotifyStrictSignals(env) {
   });
   const reconciled = reconcileLiveAlertState(rawState, account, nowMs);
   const state = reconciled.state;
+  const holdingClassification = await classifyUnknownHeldSymbols(
+    account,
+    reconciled.unknownHeldSymbols,
+    env
+  );
+  const blockingUnknownHeldSymbols = holdingClassification.materialSymbols;
 
   const autoManagementEvents = await manageAutomatedPositions(env, state);
 
@@ -2295,10 +2368,10 @@ async function checkAndNotifyStrictSignals(env) {
   // whose live net R/R is already close to the strict 1.50 threshold.
   if (
     state.preAlerts.length === 0 &&
-    !reconciled.unknownHeldSymbols.length &&
+    !blockingUnknownHeldSymbols.length &&
     !unmanagedOrders.length
   ) {
-    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + reconciled.unknownHeldSymbols.length;
+    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + blockingUnknownHeldSymbols.length;
 
     if (reservedSlots < MAX_LIVE_POSITIONS) {
       const eligible = [];
@@ -2421,7 +2494,7 @@ async function checkAndNotifyStrictSignals(env) {
     if (state.notifiedKeys.includes(key)) continue;
     if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
 
-    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + reconciled.unknownHeldSymbols.length;
+    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + blockingUnknownHeldSymbols.length;
     const reservedRisk = activeRisk + pendingRisk;
     if (reservedSlots >= MAX_LIVE_POSITIONS) {
       const reason = "max live positions/reservations reached";
@@ -2434,7 +2507,7 @@ async function checkAndNotifyStrictSignals(env) {
       });
       continue;
     }
-    if (reconciled.unknownHeldSymbols.length) {
+    if (blockingUnknownHeldSymbols.length) {
       const reason = "unmanaged non-EUR holdings present";
       blocked.push({ market: signal.market, reason });
       if (liveTradingEnabled(env)) upsertAutoAttempt(state, {
@@ -2691,6 +2764,9 @@ async function checkAndNotifyStrictSignals(env) {
     liveTradingEnabled: liveTradingEnabled(env),
     autoTradingHalted: state.autoTradingHalted,
     autoTradingHaltReason: state.autoTradingHaltReason,
+    blockingUnknownHeldSymbols,
+    ignoredDustHoldings: holdingClassification.dustHoldings,
+    holdingValuationErrors: holdingClassification.valuationErrors,
     reactionMetrics: state.reactionMetrics
   };
 }
@@ -2723,7 +2799,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.26",
+        "User-Agent": "bitvavo-collector/2.27",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2767,7 +2843,26 @@ if (
   if (apiPrice(stop, rules).split(".")[1]?.length !== 6) {
     throw new Error(`precision self-test failed for stop: ${apiPrice(stop, rules)}`);
   }
-  console.log("worker live-order decimal serialization self-test: OK");
+
+  const dustProbe = classifyHoldingTradability(
+    { symbol: "NIL", available: 0.00000001, inOrder: 0 },
+    { bid: 0.084 },
+    { minOrderInQuoteAsset: 5 }
+  );
+  if (!dustProbe.isNonTradableDust) {
+    throw new Error("dust classification self-test failed: tiny NIL balance must be ignored");
+  }
+
+  const materialProbe = classifyHoldingTradability(
+    { symbol: "NIL", available: 100, inOrder: 0 },
+    { bid: 0.084 },
+    { minOrderInQuoteAsset: 5 }
+  );
+  if (materialProbe.isNonTradableDust) {
+    throw new Error("dust classification self-test failed: tradable NIL balance must remain blocking");
+  }
+
+  console.log("worker live-order decimal serialization + dust classification self-test: OK");
 }
 
 export default {
@@ -2779,7 +2874,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.26",
+          version: "2.27",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2906,7 +3001,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.26 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.27 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
