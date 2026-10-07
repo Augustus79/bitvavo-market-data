@@ -92,7 +92,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.29",
+      "User-Agent": "bitvavo-collector/2.30",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -163,7 +163,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.29"
+    "User-Agent": "bitvavo-collector/2.30"
   };
 
   if (auth) {
@@ -264,7 +264,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.29" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.30" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -441,7 +441,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.29"
+    "User-Agent": "bitvavo-collector/2.30"
   };
 
   let sha;
@@ -493,7 +493,7 @@ async function readJsonFromRepoWithMeta({ owner, repo, path, branch = "main", to
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.29"
+      "User-Agent": "bitvavo-collector/2.30"
     }
   });
   if (response.status === 404) return { data: null, sha: null, exists: false };
@@ -539,7 +539,7 @@ async function writeJsonToRepoCas({
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.29",
+      "User-Agent": "bitvavo-collector/2.30",
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -696,6 +696,76 @@ function parsePrivateRepo(value) {
   return owner && repo ? { owner, repo } : null;
 }
 
+function normalizePrivateOrder(o, source = "ordersOpen") {
+  return {
+    orderId: o?.orderId ?? null,
+    clientOrderId: o?.clientOrderId ?? null,
+    market: o?.market ?? null,
+    side: o?.side ?? null,
+    orderType: o?.orderType ?? null,
+    status: o?.status ?? null,
+    amount: optionalNum(o?.amount),
+    amountRemaining: optionalNum(o?.amountRemaining),
+    amountQuote: optionalNum(o?.amountQuote),
+    amountQuoteRemaining: optionalNum(o?.amountQuoteRemaining),
+    price: optionalNum(o?.price),
+    triggerPrice: optionalNum(o?.triggerPrice),
+    triggerAmount: optionalNum(o?.triggerAmount),
+    triggerType: o?.triggerType ?? null,
+    triggerReference: o?.triggerReference ?? null,
+    operatorId: optionalNum(o?.operatorId),
+    created: o?.created ?? o?.createdNs ?? null,
+    updated: o?.updated ?? o?.updatedNs ?? null,
+    source
+  };
+}
+
+function activePrivateOrder(order) {
+  return ["new", "awaitingTrigger", "partiallyFilled"].includes(order?.status);
+}
+
+async function discoverReservedConditionalOrders(env, balances, normalizedOpenOrders) {
+  const visibleMarkets = new Set(
+    (normalizedOpenOrders || [])
+      .filter(activePrivateOrder)
+      .map((o) => o.market)
+      .filter(Boolean)
+  );
+  const reservedMarkets = (balances || [])
+    .filter((b) =>
+      b?.symbol &&
+      b.symbol !== "EUR" &&
+      (num(b.inOrder) || 0) > 0
+    )
+    .map((b) => `${b.symbol}-EUR`)
+    .filter((market) => !visibleMarkets.has(market));
+
+  const discovered = [];
+  const failures = [];
+
+  for (const market of reservedMarkets) {
+    try {
+      const orders = await getJson(
+        `${BITVAVO}/orders?market=${encodeURIComponent(market)}&limit=50`,
+        env,
+        { auth: true }
+      );
+      const active = (Array.isArray(orders) ? orders : [])
+        .map((o) => normalizePrivateOrder(o, "orders-fallback"))
+        .filter(activePrivateOrder);
+      discovered.push(...active);
+    } catch (error) {
+      failures.push({ market, reason: error?.message || String(error) });
+    }
+  }
+
+  return {
+    reservedMarketsQueried: reservedMarkets,
+    discovered,
+    failures
+  };
+}
+
 async function collectPrivateAccountState(env) {
   const [balances, openOrders, fees] = await Promise.all([
     getJson(`${BITVAVO}/balance`, env, { auth: true }),
@@ -711,32 +781,36 @@ async function collectPrivateAccountState(env) {
       })).filter((b) => b.symbol)
     : [];
 
-  const normalizedOrders = Array.isArray(openOrders)
-    ? openOrders.map((o) => ({
-        orderId: o?.orderId ?? null,
-        clientOrderId: o?.clientOrderId ?? null,
-        market: o?.market ?? null,
-        side: o?.side ?? null,
-        orderType: o?.orderType ?? null,
-        status: o?.status ?? null,
-        amount: optionalNum(o?.amount),
-        amountRemaining: optionalNum(o?.amountRemaining),
-        amountQuote: optionalNum(o?.amountQuote),
-        amountQuoteRemaining: optionalNum(o?.amountQuoteRemaining),
-        price: optionalNum(o?.price),
-        triggerPrice: optionalNum(o?.triggerPrice),
-        triggerAmount: optionalNum(o?.triggerAmount),
-        triggerType: o?.triggerType ?? null,
-        triggerReference: o?.triggerReference ?? null,
-        operatorId: optionalNum(o?.operatorId),
-        created: o?.created ?? o?.createdNs ?? null,
-        updated: o?.updated ?? o?.updatedNs ?? null
-      }))
+  const normalizedOpenOrders = Array.isArray(openOrders)
+    ? openOrders.map((o) => normalizePrivateOrder(o, "ordersOpen"))
     : [];
+
+  const fallback = await discoverReservedConditionalOrders(
+    env,
+    normalizedBalances,
+    normalizedOpenOrders
+  );
+
+  const byKey = new Map();
+  for (const order of [...normalizedOpenOrders, ...fallback.discovered]) {
+    const key = order.orderId
+      ? `${order.market || "?"}|${order.orderId}`
+      : JSON.stringify([
+          order.market,
+          order.side,
+          order.orderType,
+          order.status,
+          order.amount,
+          order.price,
+          order.triggerPrice
+        ]);
+    if (!byKey.has(key) || order.source === "ordersOpen") byKey.set(key, order);
+  }
+  const normalizedOrders = [...byKey.values()];
 
   return {
     ok: true,
-    version: "1.0",
+    version: "1.1",
     source: "Bitvavo private REST API (read-only key)",
     collectedAt: new Date().toISOString(),
     permissionsExpected: {
@@ -747,6 +821,12 @@ async function collectPrivateAccountState(env) {
     balances: normalizedBalances,
     openOrders: normalizedOrders,
     openOrderCount: normalizedOrders.length,
+    conditionalOrderDiscovery: {
+      fallbackUsed: fallback.reservedMarketsQueried.length > 0,
+      reservedMarketsQueried: fallback.reservedMarketsQueried,
+      fallbackOrdersFound: fallback.discovered.length,
+      failures: fallback.failures
+    },
     nonEurAssetCount: normalizedBalances.filter((b) =>
       b.symbol !== "EUR" && ((b.available || 0) > 0 || (b.inOrder || 0) > 0)
     ).length,
@@ -789,7 +869,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.29"
+    "User-Agent": "bitvavo-collector/2.30"
   };
 
   let sha;
@@ -852,7 +932,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.29"
+          "User-Agent": "bitvavo-collector/2.30"
         }
       }
     );
@@ -864,7 +944,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.29" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.30" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -3197,7 +3277,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.29",
+        "User-Agent": "bitvavo-collector/2.30",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -3258,6 +3338,27 @@ if (
   );
   if (materialProbe.isNonTradableDust) {
     throw new Error("dust classification self-test failed: tradable NIL balance must remain blocking");
+  }
+
+  const conditionalReadProbe = normalizePrivateOrder({
+    orderId: "probe",
+    market: "ORCA-EUR",
+    side: "sell",
+    orderType: "market",
+    status: "awaitingTrigger",
+    amount: "34.88",
+    triggerPrice: "2.40",
+    triggerAmount: "2.40",
+    triggerType: "price",
+    triggerReference: "lastTrade"
+  }, "orders-fallback");
+  if (
+    conditionalReadProbe.source !== "orders-fallback" ||
+    conditionalReadProbe.status !== "awaitingTrigger" ||
+    conditionalReadProbe.triggerPrice !== 2.4 ||
+    conditionalReadProbe.amount !== 34.88
+  ) {
+    throw new Error("conditional order fallback normalization self-test failed");
   }
 
   const manualHardProbe = classifyManualProtection(
@@ -3326,7 +3427,7 @@ if (
     throw new Error("live-state lock self-test failed: expired lease still active");
   }
 
-  console.log("worker decimal + dust + manual protection + distributed live-state lock self-test: OK");
+  console.log("worker decimal + dust + conditional-order fallback + manual protection + distributed live-state lock self-test: OK");
 }
 
 export default {
@@ -3338,7 +3439,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.29",
+          version: "2.30",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -3358,6 +3459,8 @@ export default {
             manualProtectedPositionsSupported: true,
             hardManualProtectionOrderType: "stopLoss",
             stopLossLimitProtectionPolicy: "conditional-only; blocks new live entries",
+            reservedConditionalOrderFallback: true,
+            reservedConditionalOrderFallbackEndpoint: "GET /orders?market=<market>",
             liveOrderSubmission: liveTradingEnabled(env),
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
@@ -3470,7 +3573,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.29 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.30 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
