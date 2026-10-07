@@ -8,6 +8,9 @@ import {
 const protocol=JSON.parse(fs.readFileSync("experiment/protocol.json","utf8"));
 const signals=JSON.parse(fs.readFileSync("signals.json","utf8"));
 const comparison=JSON.parse(fs.readFileSync("paper/comparison.json","utf8"));
+const exitShadow=fs.existsSync("exit-shadow/latest.json")
+  ? JSON.parse(fs.readFileSync("exit-shadow/latest.json","utf8"))
+  : null;
 
 function readJsonl(file){
   if(!fs.existsSync(file)) return [];
@@ -155,6 +158,19 @@ const report={
     actualPnlAfterAiCostEur:actualStrictPnl-aiCostEur,
     note:"Counterfactual is descriptive paper analysis, not causal proof."
   },
+  exitShadow: exitShadow ? {
+    mode: exitShadow.mode,
+    affectsLiveTrading: exitShadow.affectsLiveTrading,
+    affectsFrozenProtocol: exitShadow.affectsFrozenProtocol,
+    startedAtSnapshot: exitShadow.startedAtSnapshot,
+    minimumClosedTradesBeforeInterpretation: exitShadow.minimumClosedTradesBeforeInterpretation,
+    policies: exitShadow.policies
+  } : {
+    mode:"shadow",
+    status:"NOT_STARTED",
+    affectsLiveTrading:false,
+    affectsFrozenProtocol:false
+  },
   operationalStability:stability,
   riskReview:{
     thresholdPct:protocol.riskReviewThresholds.maxRealizedDrawdownPctForReview,
@@ -172,5 +188,6 @@ console.log(JSON.stringify({
   strictMeanNetR:strict.meanNetR,
   operationalStability:stability.status,
   pipelineLatencySec,
-  aiReviewedClosedTrades:reviewedClosed.length
+  aiReviewedClosedTrades:reviewedClosed.length,
+  exitShadowStartedAt:exitShadow?.startedAtSnapshot??null
 },null,2));
