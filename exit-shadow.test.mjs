@@ -56,9 +56,9 @@ snapshot = {
 r = processExitShadowState(r.state, [], snapshot);
 assert.equal(r.closedTrades.length, 0);
 const oneR = r.state.openPositions.find((p) => p.policyId === "full-runner-trail-1r");
-assert.equal(Number(oneR.currentStop.toFixed(6)), 105);
+assert.equal(Number(oneR.currentStop.toFixed(6)), 104.5);
 
-// Retrace closes 1R runners at 105, above the old target 104.
+// Retrace closes 1R runners at 104.5, above the old target 104.
 snapshot = {
   collectedAt: "2026-10-07T10:25:00.000Z",
   deep: { "AAA-EUR": { candles: { "5m": [
@@ -70,7 +70,7 @@ r = processExitShadowState(r.state, [], snapshot);
 assert.equal(r.closedTrades.length, 2);
 const full = r.closedTrades.find((t) => t.policyId === "full-runner-trail-1r");
 const half = r.closedTrades.find((t) => t.policyId === "half-target-runner-trail-1r");
-assert.equal(full.finalExitPrice, 105);
+assert.equal(full.finalExitPrice, 104.5);
 assert.ok(full.netPnlEur > 50 * ((104 - 100) / 100 - 0.005));
 assert.equal(half.legs[0].type, "TARGET_PARTIAL");
 assert.equal(half.legs[0].fraction, 0.5);
@@ -87,7 +87,7 @@ snapshot = {
 r = processExitShadowState(r.state, [], snapshot);
 assert.equal(r.closedTrades.length, 1);
 assert.equal(r.closedTrades[0].policyId, "full-runner-trail-1_5r");
-assert.equal(r.closedTrades[0].finalExitPrice, 104);
+assert.equal(r.closedTrades[0].finalExitPrice, 103.5);
 
 // If stop and target coexist in the same pre-activation 5m candle, stop wins.
 const strict2 = {
