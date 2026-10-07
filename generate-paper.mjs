@@ -46,6 +46,12 @@ function readJsonl(path) {
   }).filter(Boolean);
 }
 
+function readJson(path, fallback = null) {
+  if (!fs.existsSync(path)) return fallback;
+  try { return JSON.parse(fs.readFileSync(path, "utf8")); }
+  catch { return fallback; }
+}
+
 function readAiCostSummary() {
   const path = "ai/cost-summary.json";
   if (!fs.existsSync(path)) {
@@ -156,11 +162,17 @@ appendJsonl("paper/opportunistic-trades.jsonl", oppResult.closedTrades);
 appendJsonl("paper/opportunistic-skipped.jsonl", oppResult.skippedSignals);
 appendJsonl("paper/opportunistic-events.jsonl", oppResult.events);
 
+const exitShadowState = readJson("exit-shadow/state.json", { openPositions: [] });
+const exitShadowOpenMarkets = Array.isArray(exitShadowState?.openPositions)
+  ? exitShadowState.openPositions.map((p) => p.market).filter(Boolean)
+  : [];
+
 const forcedMarkets = [...new Set([
   ...strictResult.state.openPositions.map((p)=>p.market),
   ...strictResult.state.pendingEntries.map((p)=>p.market),
   ...oppResult.state.openPositions.map((p)=>p.market),
-  ...oppResult.state.pendingEntries.map((p)=>p.market)
+  ...oppResult.state.pendingEntries.map((p)=>p.market),
+  ...exitShadowOpenMarkets
 ])];
 
 fs.writeFileSync("paper/open-markets.json", JSON.stringify({
