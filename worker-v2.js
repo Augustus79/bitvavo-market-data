@@ -1558,7 +1558,7 @@ async function runHistoricalDryRunReplay(env) {
 
   const state = {
     ...emptyLiveAlertState(),
-    version: "1.8",
+    version: "1.9",
     autoPositions: [],
     autoTradeHistory: [],
     autoTradingHalted: false,
@@ -2057,7 +2057,7 @@ async function manageAutomatedPositionsOnlyUnlocked(env) {
     token: env.PRIVATE_GITHUB_TOKEN
   });
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.8";
+  state.version = "1.9";
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys : [];
   state.autoAttemptHistory = Array.isArray(state.autoAttemptHistory) ? state.autoAttemptHistory.slice(-1000) : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
