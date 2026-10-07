@@ -9,6 +9,8 @@ const PAPER_OPEN_MARKETS_URL = "https://raw.githubusercontent.com/Augustus79/bit
 const SIGNALS_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/signals.json";
 const AI_REVIEW_URL = "https://raw.githubusercontent.com/Augustus79/bitvavo-market-data/main/ai/latest-review.json";
 const LIVE_ALERT_STATE_FILE = "live-alert-state.json";
+const LIVE_STATE_LOCK_FILE = "live-state-lock.json";
+const LIVE_STATE_LOCK_TTL_MS = 5 * 60 * 1000;
 const EXECUTION_REHEARSAL_FILE = "execution-rehearsals.json";
 const PUBLIC_WORKER_BASE = "https://bitvavo-collector.nicolasbonnin79.workers.dev";
 const ALERT_SIGNAL_MAX_AGE_MIN = 8;
@@ -90,7 +92,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.27",
+      "User-Agent": "bitvavo-collector/2.28",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -161,7 +163,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.27"
+    "User-Agent": "bitvavo-collector/2.28"
   };
 
   if (auth) {
@@ -257,7 +259,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.27" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.28" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -434,7 +436,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.27"
+    "User-Agent": "bitvavo-collector/2.28"
   };
 
   let sha;
@@ -478,24 +480,209 @@ function base64ToUtf8(base64) {
   return new TextDecoder().decode(bytes);
 }
 
-async function readJsonFromRepo({ owner, repo, path, branch = "main", token }) {
-  if (!token) return null;
+async function readJsonFromRepoWithMeta({ owner, repo, path, branch = "main", token }) {
+  if (!token) return { data: null, sha: null, exists: false };
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
   const response = await fetch(apiUrl, {
     headers: {
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.27"
+      "User-Agent": "bitvavo-collector/2.28"
     }
   });
-  if (response.status === 404) return null;
+  if (response.status === 404) return { data: null, sha: null, exists: false };
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`GitHub private read ${response.status}: ${text.slice(0, 400)}`);
   }
-  const data = await response.json();
-  return JSON.parse(base64ToUtf8(data.content));
+  const file = await response.json();
+  return {
+    data: JSON.parse(base64ToUtf8(file.content)),
+    sha: file.sha || null,
+    exists: true
+  };
+}
+
+async function readJsonFromRepo(args) {
+  const result = await readJsonFromRepoWithMeta(args);
+  return result.data;
+}
+
+async function writeJsonToRepoCas({
+  owner,
+  repo,
+  path,
+  branch = "main",
+  data,
+  token,
+  message,
+  expectedSha = null
+}) {
+  if (!token) throw new Error("GitHub token missing");
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const body = {
+    message,
+    content: utf8ToBase64(JSON.stringify(data)),
+    branch
+  };
+  if (expectedSha) body.sha = expectedSha;
+
+  const response = await fetch(apiUrl, {
+    method: "PUT",
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "bitvavo-collector/2.28",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (response.status === 409 || response.status === 422) {
+    return { ok: false, conflict: true, status: response.status };
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub CAS write ${response.status}: ${text.slice(0, 500)}`);
+  }
+
+  const result = await response.json();
+  return {
+    ok: true,
+    conflict: false,
+    path: result.content?.path,
+    sha: result.content?.sha,
+    commit: result.commit?.sha
+  };
+}
+
+function liveStateLockActive(lock, nowMs = Date.now()) {
+  const expiresAtMs = Date.parse(lock?.expiresAt);
+  return Boolean(lock?.owner) && Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
+}
+
+async function acquireLiveStateLock(env, purpose) {
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!target || !env?.PRIVATE_GITHUB_TOKEN) {
+    return { acquired: false, reason: "private GitHub target not configured" };
+  }
+
+  const nowMs = Date.now();
+  const current = await readJsonFromRepoWithMeta({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_STATE_LOCK_FILE,
+    branch: "main",
+    token: env.PRIVATE_GITHUB_TOKEN
+  });
+
+  if (liveStateLockActive(current.data, nowMs)) {
+    return {
+      acquired: false,
+      reason: "live state lock busy",
+      lockPurpose: current.data?.purpose || null,
+      lockExpiresAt: current.data?.expiresAt || null
+    };
+  }
+
+  const ownerId = crypto.randomUUID();
+  const acquiredAt = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + LIVE_STATE_LOCK_TTL_MS).toISOString();
+  const lockDoc = {
+    version: "1.0",
+    owner: ownerId,
+    purpose,
+    acquiredAt,
+    expiresAt
+  };
+
+  const write = await writeJsonToRepoCas({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_STATE_LOCK_FILE,
+    branch: "main",
+    data: lockDoc,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: `Acquire live state lock: ${purpose}`,
+    expectedSha: current.sha
+  });
+
+  if (!write.ok && write.conflict) {
+    return { acquired: false, reason: "live state lock contention" };
+  }
+
+  return {
+    acquired: true,
+    owner: ownerId,
+    purpose,
+    acquiredAt,
+    expiresAt
+  };
+}
+
+async function releaseLiveStateLock(env, lock) {
+  if (!lock?.acquired || !lock?.owner) return { released: false, reason: "lock not owned" };
+  const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
+  if (!target || !env?.PRIVATE_GITHUB_TOKEN) return { released: false, reason: "private GitHub target not configured" };
+
+  const current = await readJsonFromRepoWithMeta({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_STATE_LOCK_FILE,
+    branch: "main",
+    token: env.PRIVATE_GITHUB_TOKEN
+  });
+  if (!current.exists || current.data?.owner !== lock.owner) {
+    return { released: false, reason: "lock ownership changed" };
+  }
+
+  const releasedAt = new Date().toISOString();
+  const releasedDoc = {
+    ...current.data,
+    owner: null,
+    purpose: null,
+    releasedAt,
+    expiresAt: releasedAt
+  };
+  const write = await writeJsonToRepoCas({
+    owner: target.owner,
+    repo: target.repo,
+    path: LIVE_STATE_LOCK_FILE,
+    branch: "main",
+    data: releasedDoc,
+    token: env.PRIVATE_GITHUB_TOKEN,
+    message: "Release live state lock",
+    expectedSha: current.sha
+  });
+
+  return write.ok
+    ? { released: true }
+    : { released: false, reason: "lock release contention" };
+}
+
+async function withLiveStateLock(env, purpose, fn) {
+  const lock = await acquireLiveStateLock(env, purpose);
+  if (!lock.acquired) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: lock.reason,
+      lockPurpose: lock.lockPurpose || null,
+      lockExpiresAt: lock.lockExpiresAt || null
+    };
+  }
+
+  try {
+    return await fn(lock);
+  } finally {
+    try {
+      await releaseLiveStateLock(env, lock);
+    } catch (error) {
+      console.error("Live state lock release failed:", error);
+    }
+  }
 }
 
 function parsePrivateRepo(value) {
@@ -590,7 +777,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.27"
+    "User-Agent": "bitvavo-collector/2.28"
   };
 
   let sha;
@@ -653,7 +840,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.27"
+          "User-Agent": "bitvavo-collector/2.28"
         }
       }
     );
@@ -665,7 +852,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.27" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.28" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -1293,7 +1480,7 @@ function autoAttemptBase(signal, live, signalsDoc) {
   };
 }
 
-async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
+async function executeAutomatedEntry(env, state, signal, live, signalsDoc, persistReservation = null) {
   const baseAttempt = autoAttemptBase(signal, live, signalsDoc);
   const key = baseAttempt.key;
 
@@ -1368,6 +1555,18 @@ async function executeAutomatedEntry(env, state, signal, live, signalsDoc) {
 
   state.autoExecutionKeys.push(key);
   state.autoExecutionKeys = state.autoExecutionKeys.slice(-500);
+  upsertAutoAttempt(state, {
+    ...baseAttempt,
+    ...planned,
+    orderSubmitted: false,
+    outcome: "RESERVED",
+    reason: "live execution reserved durably before order submission"
+  });
+
+  if (persistReservation) {
+    state.updatedAt = new Date().toISOString();
+    await persistReservation(state);
+  }
 
   const submittedAt = new Date().toISOString();
   upsertAutoAttempt(state, {
@@ -1696,7 +1895,7 @@ async function manageAutomatedPositions(env, state) {
   return events;
 }
 
-async function manageAutomatedPositionsOnly(env) {
+async function manageAutomatedPositionsOnlyUnlocked(env) {
   const target = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
   if (!target || !env?.PRIVATE_GITHUB_TOKEN) return { ok: false, skipped: true, reason: "private repo unavailable" };
 
@@ -1728,6 +1927,10 @@ async function manageAutomatedPositionsOnly(env) {
     message: "Manage automated Bitvavo positions"
   });
   return { ok: true, events, autoPositions: state.autoPositions.map((p) => p.market) };
+}
+
+async function manageAutomatedPositionsOnly(env) {
+  return withLiveStateLock(env, "auto-manage", () => manageAutomatedPositionsOnlyUnlocked(env));
 }
 
 function maxEntryForNetRR(stop, target, roundTripCostPct, minNetRR = STRICT_MIN_NET_RR) {
@@ -2221,7 +2424,7 @@ async function handleExecutionRehearsal(env, url) {
   return htmlResponse(rehearsalHtml(record), valid ? 200 : 409);
 }
 
-async function checkAndNotifyStrictSignals(env) {
+async function checkAndNotifyStrictSignalsUnlocked(env) {
   const privateTarget = parsePrivateRepo(env?.PRIVATE_GITHUB_REPO);
   if (!privateTarget || !env?.PRIVATE_GITHUB_TOKEN) {
     return { ok: false, skipped: true, reason: "private GitHub target not configured" };
@@ -2580,7 +2783,22 @@ async function checkAndNotifyStrictSignals(env) {
 
     if (liveTradingEnabled(env)) {
       try {
-        const autoResult = await executeAutomatedEntry(env, state, signal, live, signalsDoc);
+        const autoResult = await executeAutomatedEntry(
+          env,
+          state,
+          signal,
+          live,
+          signalsDoc,
+          async (reservedState) => publishJsonToRepo({
+            owner: privateTarget.owner,
+            repo: privateTarget.repo,
+            path: LIVE_ALERT_STATE_FILE,
+            branch: "main",
+            data: reservedState,
+            token: env.PRIVATE_GITHUB_TOKEN,
+            message: "Reserve live Bitvavo execution before order submission"
+          })
+        );
         if (autoResult.executed) {
           state.notifiedKeys.push(key);
           notified.push({
@@ -2771,6 +2989,10 @@ async function checkAndNotifyStrictSignals(env) {
   };
 }
 
+async function checkAndNotifyStrictSignals(env) {
+  return withLiveStateLock(env, "alert-check", () => checkAndNotifyStrictSignalsUnlocked(env));
+}
+
 async function buildAndPublish(env) {
   const snapshot = await collectSnapshot(env);
   const github = await publishToGitHub(snapshot, env.GITHUB_TOKEN);
@@ -2799,7 +3021,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.27",
+        "User-Agent": "bitvavo-collector/2.28",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2862,7 +3084,15 @@ if (
     throw new Error("dust classification self-test failed: tradable NIL balance must remain blocking");
   }
 
-  console.log("worker live-order decimal serialization + dust classification self-test: OK");
+  const lockNow = Date.parse("2026-10-07T12:00:00Z");
+  if (!liveStateLockActive({ owner: "test", expiresAt: "2026-10-07T12:05:00Z" }, lockNow)) {
+    throw new Error("live-state lock self-test failed: active lease not detected");
+  }
+  if (liveStateLockActive({ owner: "test", expiresAt: "2026-10-07T11:59:59Z" }, lockNow)) {
+    throw new Error("live-state lock self-test failed: expired lease still active");
+  }
+
+  console.log("worker decimal + dust + distributed live-state lock self-test: OK");
 }
 
 export default {
@@ -2874,7 +3104,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.27",
+          version: "2.28",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -2889,6 +3119,8 @@ export default {
             automaticExecutionDryRun: !liveTradingEnabled(env) && liveTradingCredentialsConfigured(env),
             autoAttemptHistory: true,
             exactDecimalOrderSerialization: true,
+            distributedLiveStateLock: true,
+            durablePreOrderReservation: true,
             liveOrderSubmission: liveTradingEnabled(env),
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
@@ -3001,7 +3233,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.27 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.28 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
