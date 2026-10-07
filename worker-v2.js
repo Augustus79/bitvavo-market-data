@@ -92,7 +92,7 @@ async function livePrivateJson(env, method, endpoint, { query = null, body = nul
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "bitvavo-collector/2.28",
+      "User-Agent": "bitvavo-collector/2.29",
       "Bitvavo-Access-Key": env.LIVE_BITVAVO_API_KEY,
       "Bitvavo-Access-Timestamp": timestamp,
       "Bitvavo-Access-Signature": signature,
@@ -163,7 +163,7 @@ async function getJson(url, env, { auth = true } = {}) {
   const timestamp = Date.now().toString();
   const headers = {
     "Accept": "application/json",
-    "User-Agent": "bitvavo-collector/2.28"
+    "User-Agent": "bitvavo-collector/2.29"
   };
 
   if (auth) {
@@ -224,6 +224,11 @@ function num(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function optionalNum(value) {
+  if (value === null || value === undefined || value === "") return null;
+  return num(value);
+}
+
 function compactTicker(ticker) {
   const open = num(ticker?.open);
   const last = num(ticker?.last);
@@ -259,7 +264,7 @@ function compactTicker(ticker) {
 async function getPaperOpenMarkets() {
   try {
     const response = await fetch(PAPER_OPEN_MARKETS_URL, {
-      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.28" },
+      headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.29" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
     if (!response.ok) return [];
@@ -436,7 +441,7 @@ async function publishJsonToRepo({ owner, repo, path, branch = "main", data, tok
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.28"
+    "User-Agent": "bitvavo-collector/2.29"
   };
 
   let sha;
@@ -488,7 +493,7 @@ async function readJsonFromRepoWithMeta({ owner, repo, path, branch = "main", to
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.28"
+      "User-Agent": "bitvavo-collector/2.29"
     }
   });
   if (response.status === 404) return { data: null, sha: null, exists: false };
@@ -534,7 +539,7 @@ async function writeJsonToRepoCas({
       "Accept": "application/vnd.github+json",
       "Authorization": `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "bitvavo-collector/2.28",
+      "User-Agent": "bitvavo-collector/2.29",
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -709,16 +714,23 @@ async function collectPrivateAccountState(env) {
   const normalizedOrders = Array.isArray(openOrders)
     ? openOrders.map((o) => ({
         orderId: o?.orderId ?? null,
+        clientOrderId: o?.clientOrderId ?? null,
         market: o?.market ?? null,
         side: o?.side ?? null,
         orderType: o?.orderType ?? null,
         status: o?.status ?? null,
-        amount: num(o?.amount),
-        amountRemaining: num(o?.amountRemaining),
-        price: num(o?.price),
-        stopPrice: num(o?.stopPrice),
-        created: o?.created ?? null,
-        updated: o?.updated ?? null
+        amount: optionalNum(o?.amount),
+        amountRemaining: optionalNum(o?.amountRemaining),
+        amountQuote: optionalNum(o?.amountQuote),
+        amountQuoteRemaining: optionalNum(o?.amountQuoteRemaining),
+        price: optionalNum(o?.price),
+        triggerPrice: optionalNum(o?.triggerPrice),
+        triggerAmount: optionalNum(o?.triggerAmount),
+        triggerType: o?.triggerType ?? null,
+        triggerReference: o?.triggerReference ?? null,
+        operatorId: optionalNum(o?.operatorId),
+        created: o?.created ?? o?.createdNs ?? null,
+        updated: o?.updated ?? o?.updatedNs ?? null
       }))
     : [];
 
@@ -777,7 +789,7 @@ async function publishToGitHub(snapshot, token) {
     "Accept": "application/vnd.github+json",
     "Authorization": `Bearer ${token}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "bitvavo-collector/2.28"
+    "User-Agent": "bitvavo-collector/2.29"
   };
 
   let sha;
@@ -840,7 +852,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
           "Accept": "application/vnd.github+json",
           "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "bitvavo-collector/2.28"
+          "User-Agent": "bitvavo-collector/2.29"
         }
       }
     );
@@ -852,7 +864,7 @@ async function fetchPublicRepoJson(path, env, rawFallbackUrl) {
   }
 
   const response = await fetch(`${rawFallbackUrl}?ts=${Date.now()}`, {
-    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.28" },
+    headers: { "Accept": "application/json", "User-Agent": "bitvavo-collector/2.29" },
     cf: { cacheTtl: 0, cacheEverything: false }
   });
   if (response.status === 404) return null;
@@ -873,7 +885,7 @@ async function fetchLatestAiReview(env) {
 
 function emptyLiveAlertState() {
   return {
-    version: "1.8",
+    version: "1.9",
     updatedAt: null,
     notifiedKeys: [],
     pendingRecommendations: [],
@@ -889,6 +901,8 @@ function emptyLiveAlertState() {
     autoAttemptHistory: [],
     autoPositions: [],
     autoTradeHistory: [],
+    manualProtectedPositions: [],
+    manualConditionalPositions: [],
     autoTradingHalted: false,
     autoTradingHaltReason: null
   };
@@ -928,12 +942,129 @@ function classifyHoldingTradability(balance, ticker, rules) {
   };
 }
 
+function orderRemainingBaseAmount(order) {
+  const remaining = optionalNum(order?.amountRemaining);
+  if (remaining !== null) return Math.max(0, remaining);
+  const amount = optionalNum(order?.amount);
+  return amount === null ? null : Math.max(0, amount);
+}
+
+function protectiveTriggerPrice(order) {
+  return optionalNum(order?.triggerPrice) ??
+    optionalNum(order?.triggerAmount) ??
+    optionalNum(order?.stopPrice);
+}
+
+function classifyManualProtection(balance, orders, ticker, rules, fees = {}) {
+  const holding = classifyHoldingTradability(balance, ticker, rules);
+  const market = `${balance?.symbol || ""}-EUR`;
+  const minBase = Math.max(0, num(rules?.minOrderInBaseAsset) || 0);
+  const minQuote = Math.max(0, num(rules?.minOrderInQuoteAsset) || 0);
+  const bid = num(ticker?.bid);
+  const takerPct = Math.max(0, num(fees?.takerPct) ?? DEFAULT_TAKER_FEE_PCT);
+  const exitCostPct = takerPct + SLIPPAGE_BUFFER_PCT;
+
+  const stopOrders = (orders || []).filter((o) =>
+    o?.market === market &&
+    o?.side === "sell" &&
+    (o?.orderType === "stopLoss" || o?.orderType === "stopLossLimit")
+  );
+
+  const hardOrders = stopOrders
+    .filter((o) => o.orderType === "stopLoss")
+    .map((o) => ({
+      order: o,
+      amount: orderRemainingBaseAmount(o),
+      trigger: protectiveTriggerPrice(o)
+    }))
+    .filter((x) =>
+      x.amount !== null && x.amount > 0 &&
+      x.trigger !== null && x.trigger > 0 &&
+      bid !== null && bid > x.trigger
+    )
+    .sort((a,b) => b.trigger - a.trigger);
+
+  let remaining = holding.amount;
+  let estimatedRiskToStopEur = 0;
+  const hardProtectiveOrderIds = [];
+  const hardProtectionLegs = [];
+
+  for (const item of hardOrders) {
+    if (!(remaining > 0)) break;
+    const covered = Math.min(remaining, item.amount);
+    if (!(covered > 0)) continue;
+    remaining -= covered;
+    hardProtectiveOrderIds.push(item.order.orderId);
+    const priceRisk = covered * Math.max(0, bid - item.trigger);
+    const estimatedExitCosts = covered * item.trigger * exitCostPct / 100;
+    estimatedRiskToStopEur += priceRisk + estimatedExitCosts;
+    hardProtectionLegs.push({
+      orderId: item.order.orderId,
+      amount: covered,
+      triggerPrice: item.trigger,
+      estimatedRiskEur: priceRisk + estimatedExitCosts
+    });
+  }
+
+  const uncoveredQuoteEur = bid !== null ? Math.max(0, remaining) * bid : null;
+  const uncoveredIsDust =
+    remaining <= 1e-12 ||
+    (minBase > 0 && remaining < minBase) ||
+    (uncoveredQuoteEur !== null && minQuote > 0 && uncoveredQuoteEur < minQuote);
+
+  const hardProtected =
+    !holding.isNonTradableDust &&
+    holding.amount > 0 &&
+    hardProtectionLegs.length > 0 &&
+    uncoveredIsDust;
+
+  const conditionalOrders = stopOrders
+    .filter((o) => o.orderType === "stopLossLimit")
+    .map((o) => ({
+      orderId: o.orderId,
+      amount: orderRemainingBaseAmount(o),
+      triggerPrice: protectiveTriggerPrice(o),
+      limitPrice: optionalNum(o.price)
+    }))
+    .filter((o) => o.amount !== null && o.amount > 0 && o.triggerPrice !== null && o.triggerPrice > 0);
+
+  const conditionalCoverage = conditionalOrders.reduce((sum,o)=>sum+(o.amount||0),0);
+  const conditionalResidual = Math.max(0, holding.amount - conditionalCoverage);
+  const conditionalResidualQuote = bid !== null ? conditionalResidual * bid : null;
+  const conditionalCoverageSufficient =
+    conditionalOrders.length > 0 &&
+    (
+      conditionalResidual <= 1e-12 ||
+      (minBase > 0 && conditionalResidual < minBase) ||
+      (conditionalResidualQuote !== null && minQuote > 0 && conditionalResidualQuote < minQuote)
+    );
+
+  return {
+    ...holding,
+    market,
+    hardProtected,
+    protectionType: hardProtected ? "stopLoss-market" : null,
+    hardProtectiveOrderIds,
+    hardProtectionLegs,
+    estimatedRiskToStopEur: hardProtected ? estimatedRiskToStopEur : null,
+    uncoveredAmount: Math.max(0, remaining),
+    uncoveredQuoteEur,
+    conditionalProtection: !hardProtected && conditionalCoverageSufficient,
+    conditionalProtectionReason: !hardProtected && conditionalCoverageSufficient
+      ? "stopLossLimit can remain unfilled after triggering; treated as conditional protection and still blocks new live entries"
+      : null,
+    conditionalOrders
+  };
+}
+
 async function classifyUnknownHeldSymbols(account, symbols, env) {
   const balancesBySymbol = new Map(
     (account?.balances || []).map((balance) => [balance.symbol, balance])
   );
   const materialSymbols = [];
   const dustHoldings = [];
+  const manualProtectedPositions = [];
+  const conditionalProtectedPositions = [];
   const valuationErrors = [];
 
   for (const symbol of symbols || []) {
@@ -951,12 +1082,23 @@ async function classifyUnknownHeldSymbols(account, symbols, env) {
         getJson(`${BITVAVO}/ticker/24h?market=${encodeURIComponent(market)}`, env)
       ]);
       const ticker = compactTicker(Array.isArray(tickerRaw) ? tickerRaw[0] : tickerRaw);
-      const classification = classifyHoldingTradability(balance, ticker, rules);
+      const protection = classifyManualProtection(
+        balance,
+        account?.openOrders || [],
+        ticker,
+        rules,
+        account?.fees || {}
+      );
 
-      if (classification.isNonTradableDust) {
-        dustHoldings.push({ market, ...classification });
+      if (protection.isNonTradableDust) {
+        dustHoldings.push(protection);
+      } else if (protection.hardProtected) {
+        manualProtectedPositions.push(protection);
       } else {
         materialSymbols.push(symbol);
+        if (protection.conditionalProtection) {
+          conditionalProtectedPositions.push(protection);
+        }
       }
     } catch (error) {
       materialSymbols.push(symbol);
@@ -964,12 +1106,18 @@ async function classifyUnknownHeldSymbols(account, symbols, env) {
     }
   }
 
-  return { materialSymbols, dustHoldings, valuationErrors };
+  return {
+    materialSymbols,
+    dustHoldings,
+    manualProtectedPositions,
+    conditionalProtectedPositions,
+    valuationErrors
+  };
 }
 
 function reconcileLiveAlertState(rawState, account, nowMs) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.8";
+  state.version = "1.9";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys.slice(-500) : [];
   state.autoDryRunKeys = Array.isArray(state.autoDryRunKeys) ? state.autoDryRunKeys.slice(-500) : [];
@@ -977,6 +1125,8 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.autoAttemptHistory = Array.isArray(state.autoAttemptHistory) ? state.autoAttemptHistory.slice(-1000) : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
   state.autoTradeHistory = Array.isArray(state.autoTradeHistory) ? state.autoTradeHistory.slice(-500) : [];
+  state.manualProtectedPositions = Array.isArray(state.manualProtectedPositions) ? state.manualProtectedPositions : [];
+  state.manualConditionalPositions = Array.isArray(state.manualConditionalPositions) ? state.manualConditionalPositions : [];
   state.autoTradingHalted = Boolean(state.autoTradingHalted);
   state.autoTradingHaltReason = state.autoTradingHaltReason || null;
 
@@ -1408,7 +1558,7 @@ async function runHistoricalDryRunReplay(env) {
 
   const state = {
     ...emptyLiveAlertState(),
-    version: "1.8",
+    version: "1.9",
     autoPositions: [],
     autoTradeHistory: [],
     autoTradingHalted: false,
@@ -1907,7 +2057,7 @@ async function manageAutomatedPositionsOnlyUnlocked(env) {
     token: env.PRIVATE_GITHUB_TOKEN
   });
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
-  state.version = "1.8";
+  state.version = "1.9";
   state.autoExecutionKeys = Array.isArray(state.autoExecutionKeys) ? state.autoExecutionKeys : [];
   state.autoAttemptHistory = Array.isArray(state.autoAttemptHistory) ? state.autoAttemptHistory.slice(-1000) : [];
   state.autoPositions = Array.isArray(state.autoPositions) ? state.autoPositions : [];
@@ -2454,24 +2604,37 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     env
   );
   const blockingUnknownHeldSymbols = holdingClassification.materialSymbols;
+  const manualProtectedPositions = holdingClassification.manualProtectedPositions;
+  const manualConditionalPositions = holdingClassification.conditionalProtectedPositions;
+  const manualProtectedRiskEur = manualProtectedPositions
+    .reduce((sum,p)=>sum+(num(p.estimatedRiskToStopEur)||0),0);
+  state.manualProtectedPositions = manualProtectedPositions;
+  state.manualConditionalPositions = manualConditionalPositions;
 
   const autoManagementEvents = await manageAutomatedPositions(env, state);
 
   const activeMarkets = new Set([
     ...state.activePositions.map((p) => p.market),
-    ...state.autoPositions.map((p) => p.market)
+    ...state.autoPositions.map((p) => p.market),
+    ...manualProtectedPositions.map((p) => p.market)
   ]);
   const pendingMarkets = new Set(state.pendingRecommendations.map((p) => p.market));
   const activeRisk = state.activePositions.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
   let pendingRisk = state.pendingRecommendations.reduce((s, p) => s + (num(p.plannedRiskEur) || 0), 0);
   let pendingCapital = state.pendingRecommendations.reduce((s, p) => s + (num(p.amountEur) || 0), 0);
 
-  const managedOpenMarkets = new Set([
+  const managedStateMarkets = new Set([
     ...state.activePositions.map((p) => p.market),
     ...state.autoPositions.map((p) => p.market)
   ]);
+  const manualProtectiveOrderIds = new Set(
+    manualProtectedPositions.flatMap((p) => p.hardProtectiveOrderIds || []).filter(Boolean)
+  );
   const unmanagedOrders = (account.openOrders || []).filter((o) =>
-    !(o.side === "sell" && managedOpenMarkets.has(o.market))
+    !(
+      (o.side === "sell" && managedStateMarkets.has(o.market)) ||
+      manualProtectiveOrderIds.has(o.orderId)
+    )
   );
 
   const notified = [];
@@ -2574,9 +2737,14 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     !blockingUnknownHeldSymbols.length &&
     !unmanagedOrders.length
   ) {
-    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + blockingUnknownHeldSymbols.length;
+    const reservedSlots =
+      state.activePositions.length +
+      state.pendingRecommendations.length +
+      manualProtectedPositions.length +
+      blockingUnknownHeldSymbols.length;
+    const reservedRiskForAlerts = activeRisk + pendingRisk + manualProtectedRiskEur;
 
-    if (reservedSlots < MAX_LIVE_POSITIONS) {
+    if (reservedSlots < MAX_LIVE_POSITIONS && reservedRiskForAlerts < MAX_COMBINED_LIVE_RISK_EUR) {
       const eligible = [];
 
       for (const signal of preAlertCandidates) {
@@ -2697,8 +2865,12 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     if (state.notifiedKeys.includes(key)) continue;
     if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
 
-    const reservedSlots = state.activePositions.length + state.pendingRecommendations.length + blockingUnknownHeldSymbols.length;
-    const reservedRisk = activeRisk + pendingRisk;
+    const reservedSlots =
+      state.activePositions.length +
+      state.pendingRecommendations.length +
+      manualProtectedPositions.length +
+      blockingUnknownHeldSymbols.length;
+    const reservedRisk = activeRisk + pendingRisk + manualProtectedRiskEur;
     if (reservedSlots >= MAX_LIVE_POSITIONS) {
       const reason = "max live positions/reservations reached";
       blocked.push({ market: signal.market, reason });
@@ -2983,8 +3155,12 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     autoTradingHalted: state.autoTradingHalted,
     autoTradingHaltReason: state.autoTradingHaltReason,
     blockingUnknownHeldSymbols,
+    manualProtectedPositions,
+    manualConditionalPositions,
+    manualProtectedRiskEur,
     ignoredDustHoldings: holdingClassification.dustHoldings,
     holdingValuationErrors: holdingClassification.valuationErrors,
+    unmanagedOrders,
     reactionMetrics: state.reactionMetrics
   };
 }
@@ -3021,7 +3197,7 @@ async function triggerGitHubSnapshotCollection(env, source = "worker") {
         "Accept": "application/vnd.github+json",
         "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "bitvavo-collector/2.28",
+        "User-Agent": "bitvavo-collector/2.29",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -3084,6 +3260,64 @@ if (
     throw new Error("dust classification self-test failed: tradable NIL balance must remain blocking");
   }
 
+  const manualHardProbe = classifyManualProtection(
+    { symbol: "ORCA", available: 0, inOrder: 34.88 },
+    [{
+      orderId: "hard-stop",
+      market: "ORCA-EUR",
+      side: "sell",
+      orderType: "stopLoss",
+      amount: 34.88,
+      amountRemaining: 34.88,
+      triggerPrice: 2.40
+    }],
+    { bid: 2.50 },
+    { minOrderInQuoteAsset: 5, minOrderInBaseAsset: 0.01 },
+    { takerPct: 0.25 }
+  );
+  if (!manualHardProbe.hardProtected || !(manualHardProbe.estimatedRiskToStopEur > 0)) {
+    throw new Error("manual protection self-test failed: full stopLoss coverage must be recognized");
+  }
+
+  const manualLimitProbe = classifyManualProtection(
+    { symbol: "ORCA", available: 0, inOrder: 34.88 },
+    [{
+      orderId: "conditional-stop",
+      market: "ORCA-EUR",
+      side: "sell",
+      orderType: "stopLossLimit",
+      amount: 34.88,
+      amountRemaining: 34.88,
+      triggerPrice: 2.40,
+      price: 2.38
+    }],
+    { bid: 2.50 },
+    { minOrderInQuoteAsset: 5, minOrderInBaseAsset: 0.01 },
+    { takerPct: 0.25 }
+  );
+  if (manualLimitProbe.hardProtected || !manualLimitProbe.conditionalProtection) {
+    throw new Error("manual protection self-test failed: stopLossLimit must remain conditional-only");
+  }
+
+  const underCoveredProbe = classifyManualProtection(
+    { symbol: "ORCA", available: 17.44, inOrder: 17.44 },
+    [{
+      orderId: "partial-stop",
+      market: "ORCA-EUR",
+      side: "sell",
+      orderType: "stopLoss",
+      amount: 17.44,
+      amountRemaining: 17.44,
+      triggerPrice: 2.40
+    }],
+    { bid: 2.50 },
+    { minOrderInQuoteAsset: 5, minOrderInBaseAsset: 0.01 },
+    { takerPct: 0.25 }
+  );
+  if (underCoveredProbe.hardProtected) {
+    throw new Error("manual protection self-test failed: materially uncovered balance must block");
+  }
+
   const lockNow = Date.parse("2026-10-07T12:00:00Z");
   if (!liveStateLockActive({ owner: "test", expiresAt: "2026-10-07T12:05:00Z" }, lockNow)) {
     throw new Error("live-state lock self-test failed: active lease not detected");
@@ -3092,7 +3326,7 @@ if (
     throw new Error("live-state lock self-test failed: expired lease still active");
   }
 
-  console.log("worker decimal + dust + distributed live-state lock self-test: OK");
+  console.log("worker decimal + dust + manual protection + distributed live-state lock self-test: OK");
 }
 
 export default {
@@ -3104,7 +3338,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.28",
+          version: "2.29",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -3121,6 +3355,9 @@ export default {
             exactDecimalOrderSerialization: true,
             distributedLiveStateLock: true,
             durablePreOrderReservation: true,
+            manualProtectedPositionsSupported: true,
+            hardManualProtectionOrderType: "stopLoss",
+            stopLossLimitProtectionPolicy: "conditional-only; blocks new live entries",
             liveOrderSubmission: liveTradingEnabled(env),
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
@@ -3233,7 +3470,7 @@ export default {
         if (!supplied || supplied !== env.ALERT_TRIGGER_KEY) {
           return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
         }
-        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.28 opérationnel."));
+        return jsonResponse(await sendTelegram(env, "✅ Test alerte Bitvavo temps réel — Worker 2.29 opérationnel."));
       }
 
       if (url.pathname === "/sync-private") {
