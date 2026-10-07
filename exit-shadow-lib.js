@@ -125,7 +125,7 @@ function makeShadowPosition(strictPosition, policy) {
     currentStop: stop,
     targetReached: false,
     targetReachedAt: null,
-    peakAfterTarget: target,
+    peakAfterTarget: entry,
     remainingFraction: 1,
     realizedPnlEur: 0,
     legs: [],
@@ -177,7 +177,7 @@ function closeShadowPosition(position, bar, exitPrice, exitReason, snapshotColle
     legs,
     evaluatedBars: position.evaluatedBars,
     barCloseTrailing: true,
-    ambiguityPolicy: "If original stop and target are both touched in one 5m candle before target activation, stop is assumed first. Trailing changes only after a completed 5m candle.",
+    ambiguityPolicy: "If original stop and target are both touched in one 5m candle before target activation, stop is assumed first. Trailing changes only after a completed 5m candle and uses the highest confirmed 5m close.",
     ...extra
   };
 }
@@ -219,7 +219,7 @@ function processPosition(position, policy, snapshot) {
     if (hitTarget) {
       position.targetReached = true;
       position.targetReachedAt = new Date(bar.ts + 5 * 60 * 1000).toISOString();
-      position.peakAfterTarget = position.originalTarget;
+      position.peakAfterTarget = Math.max(position.entry, bar.close);
 
       const takeFraction = clamp01(policy.takeProfitFractionAtTarget);
       if (takeFraction > 0) {
@@ -245,7 +245,7 @@ function processPosition(position, policy, snapshot) {
     }
 
     if (position.targetReached) {
-      position.peakAfterTarget = Math.max(position.peakAfterTarget, bar.high);
+      position.peakAfterTarget = Math.max(position.peakAfterTarget, bar.close);
       const trailStop = position.peakAfterTarget - policy.trailRiskMultiple * position.structuralRiskAbs;
       const breakeven = costAdjustedBreakeven(position.entry, position.roundTripCostPct);
       position.currentStop = Math.max(
