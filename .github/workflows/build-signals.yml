@@ -21,6 +21,9 @@ on:
       - "exit-shadow-lib.js"
       - "exit-shadow.test.mjs"
       - "generate-exit-shadow.mjs"
+      - "portfolio-shadow-lib.js"
+      - "portfolio-shadow.test.mjs"
+      - "generate-portfolio-shadow.mjs"
       - "experiment/protocol.json"
       - "package.json"
   workflow_dispatch:
@@ -69,11 +72,12 @@ jobs:
             npm run signals
             npm run ai-review
             npm run paper
+            npm run portfolio-shadow
             npm run exit-shadow
             npm run evaluation
 
-            if [ -z "$(git status --porcelain -- signals.json history paper ai evaluation exit-shadow)" ]; then
-              echo "signals.json, history, paper, AI shadow, exit shadow and evaluation state already current"
+            if [ -z "$(git status --porcelain -- signals.json history paper ai evaluation exit-shadow portfolio-shadow)" ]; then
+              echo "signals.json, history, paper, AI shadow, portfolio shadow, exit shadow and evaluation state already current"
               if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
                 curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 30 \
                   -X POST \
@@ -83,7 +87,7 @@ jobs:
               exit 0
             fi
 
-            git add signals.json history paper ai evaluation exit-shadow
+            git add signals.json history paper ai evaluation exit-shadow portfolio-shadow
             git commit -m "Update signals, journal and paper trading state"
 
             if git push origin HEAD:main; then

@@ -116,16 +116,28 @@ function compactTicker(ticker) {
   };
 }
 
-async function getPaperOpenMarkets() {
+async function readOpenMarkets(path) {
   try {
-    const raw = await readFile("paper/open-markets.json", "utf8");
+    const raw = await readFile(path, "utf8");
     const data = JSON.parse(raw);
     return Array.isArray(data?.markets)
-      ? data.markets.filter((m) => typeof m === "string" && m.endsWith("-EUR")).slice(0, 6)
+      ? data.markets.filter((m) => typeof m === "string" && m.endsWith("-EUR"))
       : [];
   } catch {
     return [];
   }
+}
+
+async function getForcedOpenMarkets() {
+  const [paperMarkets, portfolioShadowMarkets] = await Promise.all([
+    readOpenMarkets("paper/open-markets.json"),
+    readOpenMarkets("portfolio-shadow/open-markets.json")
+  ]);
+  return {
+    paperMarkets,
+    portfolioShadowMarkets,
+    markets: [...new Set([...paperMarkets, ...portfolioShadowMarkets])].slice(0, 7)
+  };
 }
 
 function selectDeepMarkets(universe, forcedMarkets = []) {
@@ -225,8 +237,8 @@ async function collectSnapshot() {
     .map(compactTicker)
     .sort((a, b) => (b.volumeQuote ?? 0) - (a.volumeQuote ?? 0));
 
-  const forcedPaperMarkets = await getPaperOpenMarkets();
-  const selection = selectDeepMarkets(universe, forcedPaperMarkets);
+  const forced = await getForcedOpenMarkets();
+  const selection = selectDeepMarkets(universe, forced.markets);
   const tickerMap = new Map(universe.map((t) => [t.market, t]));
   const deep = {};
 
@@ -257,7 +269,9 @@ async function collectSnapshot() {
     },
     selection: {
       deepMarkets: selection.selected,
-      forcedPaperMarkets,
+      forcedPaperMarkets: forced.paperMarkets,
+      forcedPortfolioShadowMarkets: forced.portfolioShadowMarkets,
+      forcedMarkets: forced.markets,
       topByMomentum: selection.topByMomentum,
       topByModerateMove: selection.topByModerateMove,
       topByVolume: selection.topByVolume
