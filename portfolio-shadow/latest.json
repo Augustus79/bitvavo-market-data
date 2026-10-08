@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "model": "dynamic-portfolio-shadow-v1",
+  "mode": "shadow",
+  "affectsLiveTrading": false,
+  "affectsFrozenProtocol": false,
+  "status": "COLLECTING",
+  "minimumClosedTradesBeforeInterpretation": 30,
+  "startedAtSnapshot": "2026-10-08T09:47:45.326Z",
+  "updatedAtSnapshot": "2026-10-08T09:47:45.326Z",
+  "policy": {
+    "id": "dynamic-portfolio-v1",
+    "maxPositions": 3,
+    "maxCombinedRiskEur": 3,
+    "maxNotionalPerPositionEur": 100,
+    "startingCapitalEur": 300,
+    "riskOffMultiplier": 0.75,
+    "gradeBMultiplier": 0.8,
+    "sameFamilyMultiplier": 0.8,
+    "targetPartialFraction": 0.5
+  },
+  "methodology": [
+    "Prospective only: positions are created from the same strict BUY signals, but the shadow portfolio can hold up to three positions.",
+    "Combined estimated stop risk is capped at 3 EUR and position notional at 100 EUR. Risk is reduced in BTC risk-off, for grade B signals, and for same-family concentration.",
+    "Original target is a management checkpoint, not an automatic full exit.",
+    "Management uses completed 5m/15m/1h structure, relative strength vs BTC, volume, order-book imbalance and BTC regime.",
+    "Stop changes are decisions after completed bars and only affect subsequent bars. Same-candle stop+target ambiguity is resolved conservatively in favor of the stop.",
+    "This module never places, modifies or cancels live orders and never changes the frozen entry engine."
+  ],
+  "portfolio": {
+    "openPositions": 0,
+    "allocatedEur": 0,
+    "estimatedRiskEur": 0,
+    "realizedNetPnlEur": 0,
+    "realizedEquityEur": 300,
+    "maxRealizedDrawdownEur": 0,
+    "maxRealizedDrawdownPct": 0
+  },
+  "tradeStats": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "winRatePct": null,
+    "netPnlEur": 0,
+    "meanNetR": null,
+    "profitFactor": null,
+    "bestNetR": null,
+    "worstNetR": null
+  },
+  "stats": {
+    "closedTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "ambiguousExits": 0,
+    "partialExits": 0,
+    "stopTightenings": 0,
+    "entriesOpened": 0,
+    "entriesSkippedCapacity": 0,
+    "entriesSkippedRisk": 0,
+    "monitoringGaps": 0
+  },
+  "openedThisRun": [],
+  "closedThisRun": [],
+  "skippedEntriesThisRun": [],
+  "monitoringGapsThisRun": 0,
+  "openPositions": []
+}
