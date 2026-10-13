@@ -1,0 +1,57 @@
+name: Shadow pipeline branch test
+
+on:
+  push:
+    branches: [fix-portfolio-shadow-pipeline]
+    paths:
+      - ".github/workflows/test-shadow-pipeline-branch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run regression tests
+        run: npm test
+      - name: Reproduce deterministic shadow chain
+        run: |
+          npm run signals
+          npm run paper
+          npm run portfolio-shadow
+          npm run exit-shadow
+          npm run evaluation
+      - name: Validate shadow advancement
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const snapshot = JSON.parse(fs.readFileSync("snapshot.json","utf8"));
+          const portfolio = JSON.parse(fs.readFileSync("portfolio-shadow/latest.json","utf8"));
+          const exit = JSON.parse(fs.readFileSync("exit-shadow/latest.json","utf8"));
+          const evaluation = JSON.parse(fs.readFileSync("evaluation/latest.json","utf8"));
+          if (portfolio.updatedAtSnapshot !== snapshot.collectedAt) {
+            throw new Error("portfolio shadow did not advance to current snapshot");
+          }
+          if (exit.updatedAtSnapshot !== snapshot.collectedAt) {
+            throw new Error("exit shadow did not advance to current snapshot");
+          }
+          if (evaluation.protocolIntegrity?.status !== "LOCKED") {
+            throw new Error("frozen protocol integrity changed");
+          }
+          console.log(JSON.stringify({
+            snapshot: snapshot.collectedAt,
+            portfolioUpdatedAt: portfolio.updatedAtSnapshot,
+            portfolioStatus: portfolio.status,
+            portfolioOpenPositions: portfolio.openPositions?.length ?? null,
+            exitUpdatedAt: exit.updatedAtSnapshot,
+            protocolIntegrity: evaluation.protocolIntegrity.status
+          }, null, 2));
+          NODE
