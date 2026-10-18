@@ -42,7 +42,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -66,7 +66,7 @@ jobs:
             echo "Publish attempt $attempt"
 
             # Always rebuild from the latest main so a newer snapshot wins cleanly.
-            git fetch origin main
+            git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
             git reset --hard origin/main
 
             npm run signals
