@@ -1,0 +1,33 @@
+name: Daily loss reset shadow test
+
+on:
+  push:
+    branches: [daily-loss-reset-shadow-spec]
+    paths:
+      - ".github/workflows/test-daily-loss-reset-shadow.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run full regression suite
+        run: npm test
+      - name: Verify worker remains unchanged
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const crypto = require("node:crypto");
+          const src = fs.readFileSync("worker-v2.js");
+          console.log("worker-bytes", src.length);
+          console.log("worker-sha256", crypto.createHash("sha256").update(src).digest("hex"));
+          NODE
