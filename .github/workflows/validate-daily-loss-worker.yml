@@ -1,0 +1,31 @@
+name: Validate gated daily-loss Worker fix
+
+on:
+  push:
+    branches: [fix/daily-loss-halt-expiry-gated]
+    paths:
+      - ".github/workflows/validate-daily-loss-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run complete regression suite (no live credentials)
+        run: npm test
+      - name: Verify frozen engine SHA and unchanged risk limits
+        run: |
+          test "$(git hash-object analysis-engine.js)" = "2e00019663dad2b80048b764567e6e708f37efc7"
+          test "$(git hash-object paper-trader.js)" = "b5e2d5673f4591d0d5f330e4a753e05e78ac7365"
+          grep -Fq 'const AUTO_DAILY_LOSS_LIMIT_EUR = 5;' worker-v2.js
+          grep -Fq 'const AUTO_MAX_NOTIONAL_EUR = 100;' worker-v2.js
+          grep -Fq 'const AUTO_MAX_POSITIONS = 1;' worker-v2.js
+          echo "Frozen engines and live exposure limits unchanged"
