@@ -1375,7 +1375,7 @@ async function getMarketRules(market, env) {
 function evaluateLiveDailyLossResetPolicy(rawState, nowMs) {
   const reason = rawState?.autoTradingHaltReason;
   const match = rawState?.autoTradingHalted === true && typeof reason === "string"
-    ? /^daily realized loss limit reached \\(€-((?:0|[1-9]\\d*)(?:\\.\\d{1,2})?)\\)$/.exec(reason)
+    ? /^daily realized loss limit reached \(€-((?:0|[1-9]\d*)(?:\.\d{1,2})?)\)$/.exec(reason)
     : null;
   if (!match || Number(match[1]) < AUTO_DAILY_LOSS_LIMIT_EUR ||
       !Number.isFinite(nowMs) || !Array.isArray(rawState?.autoTradeHistory)) return null;
@@ -1385,7 +1385,7 @@ function evaluateLiveDailyLossResetPolicy(rawState, nowMs) {
   for (const trade of rawState.autoTradeHistory) {
     const iso = trade?.closedAt;
     if (typeof iso !== "string" ||
-        !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/.test(iso) ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(iso) ||
         typeof trade?.realizedPnlEur !== "number" ||
         !Number.isFinite(trade.realizedPnlEur)) return null;
     const time = Date.parse(iso);
