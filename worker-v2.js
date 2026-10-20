@@ -1369,6 +1369,82 @@ async function getMarketRules(market, env) {
   return rules;
 }
 
+// Explicit opt-in only. This policy cannot clear any non-daily or malformed halt.
+// The Worker is deployed as one standalone script; keep the shadow-only module
+// independent so a GitHub merge can never change production behavior by itself.
+function evaluateLiveDailyLossResetPolicy(rawState, nowMs) {
+  const reason = rawState?.autoTradingHaltReason;
+  const match = rawState?.autoTradingHalted === true && typeof reason === "string"
+    ? /^daily realized loss limit reached \\(€-((?:0|[1-9]\\d*)(?:\\.\\d{1,2})?)\\)$/.exec(reason)
+    : null;
+  if (!match || Number(match[1]) < AUTO_DAILY_LOSS_LIMIT_EUR ||
+      !Number.isFinite(nowMs) || !Array.isArray(rawState?.autoTradeHistory)) return null;
+
+  const day = new Date(nowMs).toISOString().slice(0, 10);
+  let currentUtcDayPnlEur = 0;
+  for (const trade of rawState.autoTradeHistory) {
+    const iso = trade?.closedAt;
+    if (typeof iso !== "string" ||
+        !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/.test(iso) ||
+        typeof trade?.realizedPnlEur !== "number" ||
+        !Number.isFinite(trade.realizedPnlEur)) return null;
+    const time = Date.parse(iso);
+    if (!Number.isFinite(time) || time > nowMs ||
+        new Date(time).toISOString().slice(0, 10) !== iso.slice(0, 10)) return null;
+    if (iso.slice(0, 10) === day) {
+      currentUtcDayPnlEur += trade.realizedPnlEur;
+      if (!Number.isFinite(currentUtcDayPnlEur)) return null;
+    }
+  }
+  return currentUtcDayPnlEur > -AUTO_DAILY_LOSS_LIMIT_EUR
+    ? { currentUtcDayPnlEur }
+    : null;
+}
+
+function recoverDailyLossHaltIfSafe(state, rawState, account, classification, unmanagedOrders, env, nowMs) {
+  if (env?.AUTO_DAILY_LOSS_RESET_ENABLED !== "true" || !liveTradingEnabled(env)) return false;
+  const eligible = evaluateLiveDailyLossResetPolicy(rawState, nowMs);
+  if (!eligible || !state.autoTradingHalted || state.autoTradingHaltReason !== rawState?.autoTradingHaltReason) {
+    return false;
+  }
+  // Fail closed unless fresh read-only Bitvavo data and the existing manual
+  // protection/unknown-holdings classification prove a clean account.
+  const collectedAt = Date.parse(account?.collectedAt);
+  if (account?.ok !== true || !Number.isFinite(collectedAt) ||
+      Math.abs(nowMs - collectedAt) > 120000 ||
+      !Array.isArray(account?.balances) ||
+      account.balances.some(b => typeof b?.available !== "number" ||
+        !Number.isFinite(b.available) || typeof b?.inOrder !== "number" ||
+        !Number.isFinite(b.inOrder)) ||
+      !Array.isArray(account?.openOrders) || account.openOrders.length !== 0 ||
+      account.openOrderCount !== 0 ||
+      !Array.isArray(account?.conditionalOrderDiscovery?.failures) ||
+      account.conditionalOrderDiscovery.failures.length !== 0 ||
+      !Array.isArray(classification?.materialSymbols) ||
+      classification.materialSymbols.length !== 0 ||
+      !Array.isArray(classification?.valuationErrors) ||
+      classification.valuationErrors.length !== 0 ||
+      !Array.isArray(classification?.manualProtectedPositions) ||
+      classification.manualProtectedPositions.length !== 0 ||
+      !Array.isArray(classification?.conditionalProtectedPositions) ||
+      classification.conditionalProtectedPositions.length !== 0 ||
+      !Array.isArray(unmanagedOrders) || unmanagedOrders.length !== 0 ||
+      !Array.isArray(state.autoPositions) || state.autoPositions.length !== 0 ||
+      !Array.isArray(state.activePositions) || state.activePositions.length !== 0 ||
+      !Array.isArray(state.pendingRecommendations) || state.pendingRecommendations.length !== 0) {
+    return false;
+  }
+
+  state.autoTradingHalted = false;
+  state.autoTradingHaltReason = null;
+  state.lastAutoRecovery = {
+    recoveredAt: new Date(nowMs).toISOString(),
+    reason: "daily-loss UTC expiry; explicit opt-in, fresh empty account and strict halt checks",
+    currentUtcDayPnlEur: eligible.currentUtcDayPnlEur
+  };
+  return true;
+}
+
 function autoDailyRealizedPnlEur(state, nowMs = Date.now()) {
   const day = new Date(nowMs).toISOString().slice(0, 10);
   return (state.autoTradeHistory || [])
@@ -2717,6 +2793,12 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     )
   );
 
+  // An explicit operator opt-in may clear ONLY the expired UTC daily-loss halt.
+  // Never submit an order in the same alert-check cycle that changes the halt.
+  const dailyLossRecoveredThisCycle = recoverDailyLossHaltIfSafe(
+    state, rawState, account, holdingClassification, unmanagedOrders, env, nowMs
+  );
+
   const notified = [];
   const blocked = [];
   const candidates = Array.isArray(signalsDoc?.actionable)
@@ -2944,6 +3026,17 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     const key = `${signalsDoc.snapshotCollectedAt}|${signal.market}`;
     if (state.notifiedKeys.includes(key)) continue;
     if (activeMarkets.has(signal.market) || pendingMarkets.has(signal.market)) continue;
+    if (dailyLossRecoveredThisCycle) {
+      const reason = "daily-loss halt recovered; new orders deferred until next alert check";
+      blocked.push({ market: signal.market, reason });
+      if (liveTradingEnabled(env)) upsertAutoAttempt(state, {
+        ...autoAttemptBase(signal, null, signalsDoc),
+        outcome: "BLOCKED",
+        reason,
+        orderSubmitted: false
+      });
+      continue;
+    }
 
     const reservedSlots =
       state.activePositions.length +
@@ -3308,6 +3401,55 @@ if (
   typeof process !== "undefined" &&
   process?.env?.BITVAVO_WORKER_SELF_TEST === "1"
 ) {
+  const dailyResetNow = Date.parse("2026-10-20T12:00:00Z");
+  const staleDailyReason = "daily realized loss limit reached (€-5.34)";
+  const sampleRaw = {
+    autoTradingHalted: true,
+    autoTradingHaltReason: staleDailyReason,
+    autoTradeHistory: [{ closedAt: "2026-10-13T22:39:50.840Z", realizedPnlEur: -5.34 }]
+  };
+  const sampleAccount = {
+    ok: true, collectedAt: "2026-10-20T12:00:00Z",
+    balances: [{ symbol: "EUR", available: 280.68, inOrder: 0 }],
+    openOrders: [], openOrderCount: 0, conditionalOrderDiscovery: { failures: [] }
+  };
+  const sampleClassification = {
+    materialSymbols: [], valuationErrors: [], manualProtectedPositions: [], conditionalProtectedPositions: []
+  };
+  const sampleEnv = {
+    AUTO_DAILY_LOSS_RESET_ENABLED: "true", LIVE_TRADING_ENABLED: "true",
+    LIVE_BITVAVO_API_KEY: "test", LIVE_BITVAVO_API_SECRET: "test", LIVE_TRADING_OPERATOR_ID: "1"
+  };
+  const tryDailyResetProbe = (raw = sampleRaw, account = sampleAccount,
+    classification = sampleClassification, env = sampleEnv, pending = []) => {
+    const state = { ...emptyLiveAlertState(), ...raw, pendingRecommendations: pending };
+    const reset = recoverDailyLossHaltIfSafe(state, raw, account, classification, [], env, dailyResetNow);
+    return { reset, state };
+  };
+  if (!tryDailyResetProbe().reset ||
+      tryDailyResetProbe().state.autoTradingHalted ||
+      tryDailyResetProbe(sampleRaw, sampleAccount, sampleClassification,
+        { ...sampleEnv, AUTO_DAILY_LOSS_RESET_ENABLED: "false" }).reset ||
+      tryDailyResetProbe(sampleRaw, sampleAccount, sampleClassification,
+        { ...sampleEnv, LIVE_TRADING_ENABLED: "false" }).reset) {
+    throw new Error("daily loss reset opt-in self-test failed");
+  }
+  const unsafeRawCases = [
+    { ...sampleRaw, autoTradingHaltReason: "CRITICAL: protective stop missing" },
+    { ...sampleRaw, autoTradingHaltReason: staleDailyReason + " CRITICAL: stop missing" },
+    { ...sampleRaw, autoTradingHaltReason: "daily realized loss limit reached (€-4.99)" },
+    { ...sampleRaw, autoTradeHistory: [{ closedAt: "2026-10-20T08:00:00Z", realizedPnlEur: -5.34 }] },
+    { ...sampleRaw, autoTradeHistory: [{ closedAt: "invalid", realizedPnlEur: -5.34 }] },
+    { ...sampleRaw, autoTradeHistory: null }
+  ];
+  if (unsafeRawCases.some(raw => tryDailyResetProbe(raw).reset) ||
+      tryDailyResetProbe(sampleRaw, { ...sampleAccount, openOrderCount: 1 }).reset ||
+      tryDailyResetProbe(sampleRaw, { ...sampleAccount, collectedAt: "2026-10-19T12:00:00Z" }).reset ||
+      tryDailyResetProbe(sampleRaw, { ...sampleAccount, conditionalOrderDiscovery: { failures: ["unknown"] } }).reset ||
+      tryDailyResetProbe(sampleRaw, sampleAccount, { ...sampleClassification, materialSymbols: ["ORCA"] }).reset ||
+      tryDailyResetProbe(sampleRaw, sampleAccount, sampleClassification, sampleEnv, [{ market: "BTC-EUR" }]).reset) {
+    throw new Error("daily loss reset fail-closed self-test failed");
+  }
   const rules = { tickSize: 0.000001, quantityDecimals: 8 };
   const price = floorTick(0.043928106338708924, rules.tickSize);
   const quantity = floorDecimals(100 / price, rules.quantityDecimals);
@@ -3427,7 +3569,7 @@ if (
     throw new Error("live-state lock self-test failed: expired lease still active");
   }
 
-  console.log("worker decimal + dust + conditional-order fallback + manual protection + distributed live-state lock self-test: OK");
+  console.log("worker decimal + dust + conditional-order fallback + manual protection + distributed live-state lock + gated daily-loss reset self-test: OK");
 }
 
 export default {
@@ -3439,7 +3581,7 @@ export default {
         return jsonResponse({
           ok: true,
           service: "bitvavo-collector",
-          version: "2.30",
+          version: "2.31",
           snapshotMode: "github-actions-dispatch",
           alertLayer: {
             preAlerts: true,
@@ -3462,6 +3604,8 @@ export default {
             reservedConditionalOrderFallback: true,
             reservedConditionalOrderFallbackEndpoint: "GET /orders?market=<market>",
             liveOrderSubmission: liveTradingEnabled(env),
+            dailyLossResetOptInEnabled: env?.AUTO_DAILY_LOSS_RESET_ENABLED === "true",
+            dailyLossResetSameCycleOrdersBlocked: true,
             liveTradingConfigured: liveTradingCredentialsConfigured(env),
             liveTradingMaxPositions: AUTO_MAX_POSITIONS,
             liveTradingMaxNotionalEur: AUTO_MAX_NOTIONAL_EUR,
