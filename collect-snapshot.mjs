@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
 const BITVAVO = "https://api.bitvavo.com/v2";
-const MAX_DEEP_MARKETS = 9;
+const MAX_DEEP_MARKETS = 10;
 const MIN_VOLUME_QUOTE = 100000;
 const MAX_SPREAD_PCT = 0.75;
 const BOOK_DEPTH = 10;
@@ -138,7 +138,7 @@ async function getForcedOpenMarkets() {
     paperMarkets,
     portfolioShadowMarkets,
     adaptiveShadowMarkets,
-    markets: [...new Set([...paperMarkets, ...portfolioShadowMarkets, ...adaptiveShadowMarkets])].slice(0, 7)
+    markets: [...new Set([...paperMarkets, ...portfolioShadowMarkets, ...adaptiveShadowMarkets])].slice(0, MAX_DEEP_MARKETS - 2)
   };
 }
 

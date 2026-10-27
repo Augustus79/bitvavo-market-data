@@ -1,7 +1,8 @@
 import { closed5mBars } from "./paper-trader.js";
 
 export const ADAPTIVE_POLICY = Object.freeze({
-  id:"adaptive-runner-v1", startingCapitalEur:300, maxPositions:2, maxRiskEur:3,
+  id:"adaptive-runner-v1", startingCapitalEur:300, maxPositions:3, maxRiskEur:3,
+  maxPositionRiskEur:1,
   maxPositionEur:100, minStopPct:0.5, minStopAtr15:0.5, maxSpreadPct:0.25,
   minVolumeEur:250000, minBookBidsEur:500, minNetRR:1.5,
   entryFeePct:0.25, exitFeePct:0.25, entrySlippagePct:0.03, stopSlippagePct:0.4,
@@ -13,7 +14,7 @@ const num = x => x === null || x === undefined || x === "" ? null :
 const sum = (rows, callback) => rows.reduce((s,x)=>s+callback(x),0);
 export function newAdaptiveState() {
   return { version:"1.0", model:ADAPTIVE_POLICY.id, mode:"shadow",
-    startedAtSnapshot:null, lastProcessedSnapshot:null, seenStrictPositionIds:[],
+    startedAtSnapshot:null, lastProcessedSnapshot:null, seenSignalIds:[], lastBuyByMarket:{},
     startingCapitalEur:300, realizedEquityEur:300, realizedNetPnlEur:0,
     peakRealizedEquityEur:300, maxRealizedDrawdownPct:0, openPositions:[],
     stats:{opened:0, closed:0, wins:0, losses:0, rejected:0,
@@ -63,7 +64,7 @@ export function qualifyEntry(signal, snapshot, state) {
   const used=sum(state.openPositions,x=>x.amountEur);
   const existingRisk=sum(state.openPositions,x=>Math.max(0,x.amountEur*
     (100*(x.entry-x.currentStop)/x.entry+x.costPct+p.stopSlippagePct)/100));
-  const allowance=Math.min(signal.tradeGrade==="B"?0.8:1.25,p.maxRiskEur-existingRisk);
+  const allowance=Math.min(signal.tradeGrade==="B"?0.8:p.maxPositionRiskEur,p.maxRiskEur-existingRisk);
   const amount=Math.min(p.maxPositionEur,Math.max(0,state.realizedEquityEur-used),allowance/(riskPct/100));
   if(!(allowance>0 && amount>=10))return {reason:"INSUFFICIENT_RISK_OR_CAPITAL"};
   const bars=barsFor(snapshot,signal.market);
@@ -146,9 +147,13 @@ function managePosition(state,pos,snapshot) {
 export function processAdaptiveShadow(input,strictPositions,signals,snapshot) {
   if(!snapshot?.collectedAt||signals?.snapshotCollectedAt!==snapshot.collectedAt||
      !Array.isArray(strictPositions))throw Error("Mismatched snapshot, signals or strict positions");
-  const initial=!input?.startedAtSnapshot,base=newAdaptiveState();
+  const initial=!input?.startedAtSnapshot, base=newAdaptiveState();
+  // Upgrade safely: a pre-existing BUY must not become a new entry solely
+  // because the rising-edge tracker was introduced.
+  const seedOnly=initial||!Object.prototype.hasOwnProperty.call(input||{},"lastBuyByMarket");
   const state={...base,...(input||{}),stats:{...base.stats,...(input?.stats||{})},
-    seenStrictPositionIds:[...(input?.seenStrictPositionIds||[])],
+    seenSignalIds:[...(input?.seenSignalIds||[])],
+    lastBuyByMarket:{...(input?.lastBuyByMarket||{})},
     openPositions:[...(input?.openPositions||[])]};
   if(initial)state.startedAtSnapshot=snapshot.collectedAt;
   if(state.lastProcessedSnapshot===snapshot.collectedAt)
@@ -164,22 +169,34 @@ export function processAdaptiveShadow(input,strictPositions,signals,snapshot) {
     else survivors.push(r.position);
   }
   state.openPositions=survivors;
-  const seen=new Set(state.seenStrictPositionIds);
-  const byMarket=new Map((signals.signals||[]).map(s=>[s.market,s]));
-  for(const strict of strictPositions){
-    if(!strict?.id||seen.has(strict.id))continue;
-    seen.add(strict.id);
-    // First snapshot intentionally does NOT backfill existing paper positions.
-    if(initial||strict.openedAt!==snapshot.collectedAt)continue;
-    const s=byMarket.get(strict.market),q=qualifyEntry(s,snapshot,state);
+  const seen=new Set(state.seenSignalIds);
+  const strictByMarket=new Map(strictPositions
+    .filter(x=>x?.openedAt===snapshot.collectedAt)
+    .map(x=>[x.market,x]));
+  const buyByMarket={};
+  // An independent fresh STRICT BUY event can open a third shadow position
+  // even if the original frozen paper engine has reached its own 2-position cap.
+  // Rising edges avoid repeated entries on unchanged BUY snapshots.
+  for(const s of signals.signals||[]){
+    if(!s?.market)continue;
+    const buy=s.action==="BUY";
+    buyByMarket[s.market]=buy;
+    if(!buy||seedOnly||state.lastBuyByMarket[s.market])continue;
+    const adaptiveEntryId="adaptive|"+s.market+"|"+snapshot.collectedAt;
+    if(seen.has(adaptiveEntryId))continue;
+    seen.add(adaptiveEntryId);
+    const strict=strictByMarket.get(s.market)||null;
+    const q=qualifyEntry(s,snapshot,state);
     if(q.reason){
-      skipped.push({at:snapshot.collectedAt,market:strict.market,
-        strictPositionId:strict.id,reason:q.reason,details:q});
+      skipped.push({at:snapshot.collectedAt,market:s.market,
+        adaptiveEntryId,strictPositionId:strict?.id??null,
+        reason:q.reason,details:q});
       state.stats.rejected++;
       continue;
     }
-    const pos={strictPositionId:strict.id,market:strict.market,family:strict.family,
-      btcRegimeAtEntry:strict.btcRegimeAtEntry,openedAt:snapshot.collectedAt,
+    const pos={adaptiveEntryId,strictPositionId:strict?.id??null,
+      market:s.market,family:s.family,tradeGrade:s.tradeGrade,
+      btcRegimeAtEntry:s.btcRegime,openedAt:snapshot.collectedAt,
       entry:q.entry,initialStop:q.stop,currentStop:q.stop,originalTarget:q.target,
       targetCheckpointReached:false,costPct:q.costPct,amountEur:q.amount,
       initialRiskEur:q.initialRiskEur,initialStopPct:q.stopPct,entryStressNetRR:q.netRR,
@@ -187,10 +204,12 @@ export function processAdaptiveShadow(input,strictPositions,signals,snapshot) {
       stopTightenings:0,dataGapped:false};
     state.openPositions.push(pos);
     state.stats.opened++;
-    opened.push({market:pos.market,strictPositionId:pos.strictPositionId,
-      amountEur:pos.amountEur,entryStressNetRR:pos.entryStressNetRR});
+    opened.push({market:pos.market,adaptiveEntryId,strictPositionId:pos.strictPositionId,
+      amountEur:pos.amountEur,initialRiskEur:pos.initialRiskEur,
+      entryStressNetRR:pos.entryStressNetRR});
   }
-  state.seenStrictPositionIds=[...seen].slice(-2000);
+  state.seenSignalIds=[...seen].slice(-2000);
+  state.lastBuyByMarket=buyByMarket;
   state.lastProcessedSnapshot=snapshot.collectedAt;
   return {state,opened,closedTrades,skipped,events};
 }

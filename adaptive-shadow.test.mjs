@@ -16,7 +16,7 @@ const frame=(i,rows,signal=sig(),stricts=[])=>{
   }}},signals:{snapshotCollectedAt:collectedAt,signals:[signal]},stricts};
 };
 const run=(state,f)=>processAdaptiveShadow(state,f.stricts,f.signals,f.snapshot);
-let f=frame(29,stable),r=run(newAdaptiveState(),f);
+let f=frame(29,stable,sig({action:"WAIT"})),r=run(newAdaptiveState(),f);
 assert.equal(r.opened.length,0);
 let next=[...stable,[100,100.2,99.9,100.1]];
 f=frame(30,next);
@@ -50,7 +50,7 @@ const lowQuality=qualifyEntry(sig({dataQuality:{"5m":{ok:false},"15m":{ok:true},
   frame(29,stable).snapshot,newAdaptiveState());
 assert.equal(lowQuality.reason,"INVALID_STRICT_SIGNAL_OR_DATA");
 const noCap=newAdaptiveState();
-let a=run(noCap,frame(29,stable)).state;
+let a=run(noCap,frame(29,stable,sig({action:"WAIT"}))).state;
 let entry=frame(30,[...stable,[100,100.2,99.9,100]]);
 entry.stricts=[{id:"strict|AAA|two",openedAt:entry.snapshot.collectedAt,
   market:"AAA-EUR",family:"confirmed breakout",btcRegimeAtEntry:"risk-on"}];
@@ -60,4 +60,49 @@ r=run(a,frame(31,both));
 assert.equal(r.closedTrades.length,1);
 assert.equal(r.closedTrades[0].exitReason,"INITIAL_STOP");
 assert.equal(ADAPTIVE_POLICY.id,"adaptive-runner-v1");
+
+// Three independent concurrent positions, even without strict-paper slots.
+const names=["AAA-EUR","BBB-EUR","CCC-EUR","DDD-EUR"];
+const waitSignals=names.map(m=>sig({market:m,action:"WAIT"}));
+const multiBars=[...stable,[100,100.2,99.9,100.1]];
+function multiFrame(i,signalRows,withMissing=false) {
+  const collectedAt=new Date(t0+(i+1)*300000+10000).toISOString();
+  const markets=Object.fromEntries(names.map(m=>[m,{
+    ticker:{ask:100,spreadPct:0.03,volumeQuote:1000000},
+    candles:{"5m":mk(multiBars)}
+  }]));
+  if(withMissing) delete markets["AAA-EUR"];
+  return {snapshot:{collectedAt,deep:markets},
+    signals:{snapshotCollectedAt:collectedAt,signals:signalRows},
+    stricts:[]};
+}
+let multi=run(newAdaptiveState(),multiFrame(29,waitSignals)).state;
+let mres=run(multi,multiFrame(30,names.map(m=>sig({market:m}))));
+assert.equal(ADAPTIVE_POLICY.maxPositions,3);
+assert.equal(mres.opened.length,3);
+assert.equal(mres.state.openPositions.length,3);
+assert.equal(mres.skipped.length,1);
+assert.equal(mres.skipped[0].reason,"CAPACITY");
+assert.equal(mres.state.stats.opened,3);
+assert.ok(mres.opened.every(x=>x.strictPositionId===null));
+assert.ok(mres.opened.every(x=>x.initialRiskEur<=1.0000001));
+assert.ok(mres.opened.reduce((s,x)=>s+x.initialRiskEur,0)<=3.0000001);
+assert.ok(mres.state.openPositions.reduce((s,x)=>s+x.amountEur,0)<=300.00001);
+// Idempotence and rising-edge gating on continuously active BUY signals.
+assert.equal(run(mres.state,multiFrame(30,names.map(m=>sig({market:m})))).opened.length,0);
+mres=run(mres.state,multiFrame(31,names.map(m=>sig({market:m}))));
+assert.equal(mres.opened.length,0);
+assert.equal(mres.state.openPositions.length,3);
+// A signal returning after WAIT still cannot exceed the three-position limit.
+mres=run(mres.state,multiFrame(32,names.map(m=>sig({market:m,action:"WAIT"}))));
+mres=run(mres.state,multiFrame(33,names.map(m=>sig({market:m}))));
+assert.equal(mres.opened.length,0);
+assert.equal(mres.state.openPositions.length,3);
+assert.equal(mres.skipped.filter(x=>x.reason==="CAPACITY").length,4);
+// Limit never authorizes entries with missing deep-market data.
+const missingState=run(newAdaptiveState(),multiFrame(29,waitSignals)).state;
+const missingResult=run(missingState,multiFrame(30,names.map(m=>sig({market:m})),true));
+assert.ok(missingResult.state.openPositions.length<=3);
+assert.equal(missingResult.skipped.find(x=>x.market==="AAA-EUR")?.reason,"INVALID_STRICT_SIGNAL_OR_DATA");
+
 console.log("adaptive-shadow.test.mjs OK");

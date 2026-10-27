@@ -40,7 +40,7 @@ write(dir+"/latest.json",{
   status:trades.filter(x=>!x.dataGapped).length>=ADAPTIVE_POLICY.minimumCleanClosedTrades?
     "SAMPLE_CHECKPOINT_REACHED":"COLLECTING",
   methodology:[
-    "Prospective only, new strict paper entries; no historical backfill.",
+    "Prospective rising-edge Strict BUY signals, independent of the two-position frozen paper portfolio; no historical backfill.",
     "Execution assumptions: taker/taker fees, spread, entry buffer and adverse stop slippage.",
     "Target is a reference, NOT a take-profit order; 100% of the position can run.",
     "Trailing uses completed 5m bars, max confirmed close, ATR and trend, after 2 structural R. No unconditional break-even stop.",
@@ -55,6 +55,7 @@ write(dir+"/latest.json",{
     meanDeltaR:mean(matched.map(x=>x.t.netR-x.b.netPnlEur/x.b.plannedRiskEur)),
     better:matched.filter(x=>x.t.netR>x.b.netPnlEur/x.b.plannedRiskEur).length,
     worse:matched.filter(x=>x.t.netR<x.b.netPnlEur/x.b.plannedRiskEur).length},
+  unpairedShadowTrades:trades.filter(t=>!t.strictPositionId).length,
   rejectedStrictEntries:{count:skipped.length,byReason:reasons,
     baselineClosed:skippedWithBaseline.length,
     baselineNetPnlEur:skippedWithBaseline.reduce((s,x)=>s+x.netPnlEur,0)},
