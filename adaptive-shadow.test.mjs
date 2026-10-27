@@ -4,7 +4,7 @@ const t0=Date.parse("2026-10-27T12:00:00Z");
 const bar=(i,o,h,l,c)=>[t0+i*300000,o,h,l,c,20];
 const mk=rows=>rows.map((x,i)=>bar(i,...x)).reverse();
 const stable=Array.from({length:30},()=>[100,100.2,99.9,100]);
-const sig=(extra={})=>({market:"AAA-EUR",action:"BUY",entry:100,stop:99,target:103,
+const sig=(extra={})=>({market:"AAA-EUR",action:"BUY",entry:100,stop:99.4,target:103,
   tradeGrade:"A",family:"momentum/relative strength",
   metrics:{book:{bidDepth10:5000},"15m":{atrPct:1}},
   dataQuality:{"5m":{ok:true},"15m":{ok:true},"1h":{ok:true}},...extra});
@@ -24,14 +24,14 @@ f.stricts=[{id:"strict|AAA|one",openedAt:f.snapshot.collectedAt,market:"AAA-EUR"
   family:"momentum/relative strength",btcRegimeAtEntry:"neutral"}];
 r=run(r.state,f);
 assert.equal(r.opened.length,1);
-assert.equal(r.state.openPositions[0].currentStop,99);
+assert.equal(r.state.openPositions[0].currentStop,99.4);
 assert.equal(run(r.state,f).opened.length,0);
 next.push([100.1,104,99.9,103.3]);
 r=run(r.state,frame(31,next));
 assert.equal(r.closedTrades.length,0);
 assert.equal(r.state.openPositions[0].targetCheckpointReached,true);
 assert.equal(r.state.openPositions[0].trailingActivated,true);
-assert.ok(r.state.openPositions[0].currentStop>99);
+assert.ok(r.state.openPositions[0].currentStop>99.4);
 assert.ok(r.state.openPositions[0].currentStop<103.3);
 const lastStop=r.state.openPositions[0].currentStop;
 next.push([103.3,103.7,103,103.4]);
