@@ -129,14 +129,16 @@ async function readOpenMarkets(path) {
 }
 
 async function getForcedOpenMarkets() {
-  const [paperMarkets, portfolioShadowMarkets] = await Promise.all([
+  const [paperMarkets, portfolioShadowMarkets, adaptiveShadowMarkets] = await Promise.all([
     readOpenMarkets("paper/open-markets.json"),
-    readOpenMarkets("portfolio-shadow/open-markets.json")
+    readOpenMarkets("portfolio-shadow/open-markets.json"),
+    readOpenMarkets("adaptive-shadow/open-markets.json")
   ]);
   return {
     paperMarkets,
     portfolioShadowMarkets,
-    markets: [...new Set([...paperMarkets, ...portfolioShadowMarkets])].slice(0, 7)
+    adaptiveShadowMarkets,
+    markets: [...new Set([...paperMarkets, ...portfolioShadowMarkets, ...adaptiveShadowMarkets])].slice(0, 7)
   };
 }
 
@@ -271,6 +273,7 @@ async function collectSnapshot() {
       deepMarkets: selection.selected,
       forcedPaperMarkets: forced.paperMarkets,
       forcedPortfolioShadowMarkets: forced.portfolioShadowMarkets,
+       forcedAdaptiveShadowMarkets: forced.adaptiveShadowMarkets,
       forcedMarkets: forced.markets,
       topByMomentum: selection.topByMomentum,
       topByModerateMove: selection.topByModerateMove,
