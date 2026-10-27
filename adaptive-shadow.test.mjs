@@ -98,7 +98,8 @@ mres=run(mres.state,multiFrame(32,names.map(m=>sig({market:m,action:"WAIT"}))));
 mres=run(mres.state,multiFrame(33,names.map(m=>sig({market:m}))));
 assert.equal(mres.opened.length,0);
 assert.equal(mres.state.openPositions.length,3);
-assert.equal(mres.skipped.filter(x=>x.reason==="CAPACITY").length,4);
+assert.equal(mres.skipped.filter(x=>x.reason==="CAPACITY").length,1);
+assert.equal(mres.skipped.filter(x=>x.reason==="MARKET_ALREADY_OPEN").length,3);
 // Limit never authorizes entries with missing deep-market data.
 const missingState=run(newAdaptiveState(),multiFrame(29,waitSignals)).state;
 const missingResult=run(missingState,multiFrame(30,names.map(m=>sig({market:m})),true));
