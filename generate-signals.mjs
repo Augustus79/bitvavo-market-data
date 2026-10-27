@@ -1,7 +1,7 @@
 // deterministic signal generation entrypoint
 import fs from "node:fs";
-import path from "node:path";
 import { analyze } from "./analysis-engine.js";
+import { appendSignalRecord, migrateLegacySignalJournals } from "./signal-journal.js";
 
 const snapshot = JSON.parse(fs.readFileSync("snapshot.json", "utf8"));
 const result = analyze(snapshot, new Date());
@@ -59,11 +59,6 @@ function appendJournal(result) {
     throw new Error("Invalid snapshotCollectedAt; refusing to journal");
   }
 
-  const month = result.snapshotCollectedAt.slice(0, 7);
-  const dir = "history";
-  const file = path.join(dir, `signals-${month}.jsonl`);
-  fs.mkdirSync(dir, { recursive: true });
-
   const record = {
     schemaVersion: "1.0",
     engineVersion: result.engineVersion,
@@ -76,25 +71,8 @@ function appendJournal(result) {
     signals: (result.signals ?? []).map(compactSignal)
   };
 
-  let existing = "";
-  if (fs.existsSync(file)) existing = fs.readFileSync(file, "utf8");
-
-  const alreadyPresent = existing
-    .split("\n")
-    .filter(Boolean)
-    .some((line) => {
-      try {
-        return JSON.parse(line).snapshotCollectedAt === result.snapshotCollectedAt;
-      } catch {
-        return false;
-      }
-    });
-
-  if (!alreadyPresent) {
-    fs.appendFileSync(file, JSON.stringify(record) + "\n");
-  }
-
-  return { file, appended: !alreadyPresent };
+  const migrated = migrateLegacySignalJournals();
+  return { ...appendSignalRecord(record), migrated };
 }
 
 const journal = appendJournal(result);
