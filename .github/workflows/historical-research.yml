@@ -5,6 +5,7 @@ on:
     paths: ['research/backtest/**', '.github/workflows/historical-research.yml']
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: isolated-historical-research
   cancel-in-progress: false
@@ -33,6 +34,26 @@ jobs:
           node exit-shadow.test.mjs
           node portfolio-shadow.test.mjs
           node research/backtest/frozen_adapters.mjs > /tmp/adapter-smoke.json
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: historical-research
+          run-id: 41225416429
+          github-token: ${{ github.token }}
+          path: /tmp/previous-research
+      - name: Reuse public candles and recover exact entry snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import pathlib,shutil
+          for p in pathlib.Path('/tmp/previous-research').rglob('cache'):
+            if p.is_dir():
+              shutil.copytree(p,'research/backtest/cache',dirs_exist_ok=True)
+              break
+          PY
+          python research/backtest/recover_contexts.py
+          node research/backtest/qualify_contexts.mjs
       - name: Audit archives and fetch public candles with bounded calls
         run: |
           python research/backtest/run.py --fetch-public --max-api-calls 120 > /tmp/research-summary.json

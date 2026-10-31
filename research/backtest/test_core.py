@@ -77,6 +77,16 @@ class ResearchTests(unittest.TestCase):
         def row(at,action):return dict(snapshotCollectedAt=at,snapshotFresh=True,signals=[dict(market='TEST-EUR',action=action,dataQualityOk=True)])
         r=[row('2026-10-01T00:00:00Z','BUY'),row('2026-10-01T00:05:00Z','WAIT'),row('2026-10-01T00:10:00Z','BUY')]
         self.assertEqual(len(signals_from(r)),1)
+    def test_original_gate_requires_exact_context(self):
+        r=self.sim(cfg=dict(originalAdaptiveGates=True))
+        self.assertEqual(r['rejections']['missing_or_mismatched_historical_context'],1)
+        signal=self.s();signal['historicalContext']=dict(stop=90,target=130,gate=dict(reason='LIQUIDITY_OR_SPREAD'))
+        r=self.sim(signal=signal,cfg=dict(originalAdaptiveGates=True))
+        self.assertEqual(r['rejections']['frozen_gate_LIQUIDITY_OR_SPREAD'],1)
+    def test_original_gate_context_mismatch_rejected(self):
+        signal=self.s();signal['historicalContext']=dict(stop=91,target=130,gate={})
+        r=self.sim(signal=signal,cfg=dict(originalAdaptiveGates=True))
+        self.assertEqual(r['executedEntries'],0)
     def test_reproducible(self):self.assertEqual(self.sim(),self.sim())
 
 if __name__=='__main__':unittest.main()

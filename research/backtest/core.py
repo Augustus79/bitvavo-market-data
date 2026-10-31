@@ -96,7 +96,7 @@ def signals_from(rows):
                 continue
             if t-ms(r['snapshotCollectedAt'])>120_000:
                 continue
-            q = dict(s, availableAt=t, btcRegime=r.get('btcRegime'))
+            q = dict(s, availableAt=t, snapshotAt=r['snapshotCollectedAt'], btcRegime=r.get('btcRegime'))
             result.append(q)
         last = {k:v for k,v in last.items() if k in present}
     return sorted(result,key=lambda s:(s['availableAt'],s['market']))
@@ -166,6 +166,12 @@ def simulate(signals, bars, cfg, start, end):
             if not all(isinstance(x,(int,float)) and math.isfinite(x) for x in [stop,target,entry]) or not 0<stop<entry<target:
                 rejects['invalid_levels']+=1; continue
             adaptive=exit_kind=='adaptive'
+            if cfg.get('originalAdaptiveGates'):
+                context=s.get('historicalContext')
+                if not context or any(context.get(k)!=s.get(k) for k in ('stop','target')):
+                    rejects['missing_or_mismatched_historical_context']+=1; continue
+                if context['gate'].get('reason'):
+                    rejects['frozen_gate_'+context['gate']['reason']]+=1; continue
             atr=s.get('metrics15m',{}).get('atrPct') if s.get('metrics15m') else None
             stop_pct=100*(entry-stop)/entry
             if adaptive and (not atr or stop_pct<max(.5,.5*atr,.8*100*(2*fee+spread+slip))):

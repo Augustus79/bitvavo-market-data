@@ -26,7 +26,7 @@ def load_prices(root,cache):
         bars[m].extend(b for b in d.get('candles',{}).get('5m',[]) if float(b[0])+STEP<=cutoff)
     if cache.exists():
         for p in sorted(cache.glob('*.json')):
-            if p.name=='fetch-log.json': continue
+            if p.name in ('fetch-log.json','recovery-log.json','entry-contexts.json'): continue
             obj=json.loads(p.read_text())
             if obj.get('schema')!='public-candles-cache-v1': continue
             if digest(json.dumps(obj['bars'],separators=(',',':')).encode())!=obj['sha256']:
@@ -84,6 +84,7 @@ def variants():
         ('runner-1r',dict(exit='trail-1r')),('runner-1.5r',dict(exit='trail-1.5r')),
         ('half-target-runner',dict(exit='partial')),
         ('adaptive-exit-proxy',dict(exit='adaptive',maxPositions=3)),
+        ('adaptive-original-entry-gates',dict(exit='adaptive',maxPositions=3,originalAdaptiveGates=True)),
         ('dynamic-portfolio-proxy',dict(exit='partial',maxPositions=3,portfolio='dynamic')),
         ('grade-a-runner',dict(exit='adaptive',entryFilter='grade-a',maxPositions=3)),
         ('risk-on-runner',dict(exit='adaptive',entryFilter='risk-on',maxPositions=3)),
@@ -135,12 +136,15 @@ def main():
         rows=[]; audit=dict(status='BLOCKED_ARCHIVE_ACCESS',missingParts=missing)
     else: rows,audit=load_journal(root)
     sigs=signals_from(rows)
+    context_path=args.cache/'entry-contexts.json'
+    contexts=json.loads(context_path.read_text()).get('contexts',{}) if context_path.exists() else {}
+    for s in sigs: s['historicalContext']=contexts.get(s['snapshotAt']+'|'+s['market'])
     bars=load_prices(root,args.cache)
     cutoff=ms(rows[-1]['snapshotCollectedAt']) if rows else ms(json.loads((root/'snapshot.json').read_text())['collectedAt'])
     if args.fetch_public and not partial:
         backfill(sigs,bars,args.cache,cutoff,args.max_api_calls)
         bars=load_prices(root,args.cache)
-    audit.update(causalBuyEdges=len(sigs),priceMarkets={m:dict(bars=len(bs),start=iso(bs[0][0]),end=iso(bs[-1][0]),
+    audit.update(recoveredEntryContexts=len(contexts),causalBuyEdges=len(sigs),priceMarkets={m:dict(bars=len(bs),start=iso(bs[0][0]),end=iso(bs[-1][0]),
         missing5mSlots=sum((b[0]-a[0])//STEP-1 for a,b in zip(bs,bs[1:]))) for m,bs in sorted(bars.items()) if bs},
         fullHistoricalSnapshotsAvailable=False,orderBookHistoryAvailable=False,
         interpretation='RESEARCH_PROXIES_ONLY; exact Adaptive entry liquidity gates cannot be reconstructed',
