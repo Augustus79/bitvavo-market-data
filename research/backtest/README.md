@@ -1,9 +1,13 @@
-# Historical research (offline / spot only)
+# Bitvavo historical research — isolated spot simulation
 
-Pinned sources and exact frozen blob hashes: sources.json. Existing engine files, experiment protocol and production workflows are not modified. No credentials, private API clients, order functions, Worker imports, deployment or main writes.
+All writes are on research/historical-backtest-20261031. No production workflows, frozen engines, protocol or account repository files are changed. No Bitvavo credentials or order client is used. GitHub snapshot recovery uses read-only repository GETs and an optional GH_TOKEN restricted to GitHub.
 
-## Reproduce
-Requires Python >=3.10 and Node >=20; no pip/npm dependencies.
+## Reproduce offline
+Python >=3.10; Node >=20; no third-party packages.
+
+1. Check out this branch. Original market-data inputs are pinned at 88d4a946e68bb0fde7c109f78aa216b270506378. Account-state read pin: 761044838cd8a18be6831c8cbdf0fc1d9ced1a7b.
+2. Download the permanent dataset below, verify dataset.json SHA-256, and extract beside run.py to restore cache/.
+3. Run:
 
 ```bash
 python research/backtest/verify_frozen.py
@@ -13,28 +17,31 @@ node paper-trader.test.mjs
 node adaptive-shadow.test.mjs
 node exit-shadow.test.mjs
 node portfolio-shadow.test.mjs
-python research/backtest/run.py --fetch-public --max-api-calls 120
-# Repeat OFFLINE with the retained candle cache:
+node research/backtest/qualify_contexts.mjs
 python research/backtest/run.py
+python research/backtest/paired_existing.py
 ```
 
-Report: results/REPORT.md and results/report.json. Archive input hashes, normalized candle checksums and API response checksums are recorded. Preserve cache with report; the public API can revise candles later. Cache and report are uploaded as a 30-day GitHub artifact; save externally for long-term reproduction. Re-running with the same verified inputs is deterministic.
+Optional fresh public candle recovery: run.py --fetch-public --max-api-calls 120. Only public GET /v2/{market}/candles is permitted. Fixed UTC chunks, 1440 rows maximum, bounded sequential calls, stop at first HTTP/rate-limit/network error. No missing bar interpolation. Reuse the cache; public API revisions can otherwise change results.
+Optional entry snapshot recovery: recover_contexts.py followed by node qualify_contexts.mjs. Existing cached snapshots are reused. Exact collectedAt must match; no approximate substitutions. Frozen qualification is run with an empty portfolio to verify entry market gates; research portfolio constraints are separately modeled.
 
-The research workflow runs only on the explicitly named research branch and matching paths, with contents:read and persist-credentials:false. It never runs production entrypoints or uses secrets. No schedule, no order endpoints, no auto-merge.
+## Verified execution
+GitHub run 41225886947 succeeded. 16 Python tests and five existing JS suites passed. Protected source hashes verified before and after. 89 historical entry snapshots recovered; all 89 gate outputs reproduced locally byte-for-byte. Initial data recovery used 64 public candle GETs; second execution used zero additional Bitvavo calls.
 
-## Interpretation
-Ten fixed variants, two cost scenarios, development followed by two chronological validation windows with 48h embargo. No fitted parameters or winner selection. Bars available at end of interval; a signal's availability is max(snapshot, analysis time); execution is next whole 5m open. Positions from previous windows are never carried across splits. Indicators may use earlier completed bars. Stops are checked before target/trail; stop gap fills use min(open,stop) and adverse slippage. Partial sells incur proportional fees. Equity includes estimated liquidation costs and open PnL. Unclosed positions are censored separately, not counted as closed wins.
+11,272 journal snapshots, no duplicates, 89.636% five-minute grid coverage, 177 intervals over ten minutes, largest gap 15h30. 76,316 loaded five-minute candles across 41 markets, covering selected BUY lifetimes plus warmup, not the whole exchange. 66 fixed comparisons: 11 variants × 2 cost assumptions × 3 chronological windows. No winner.
 
-Sizing uses previous completed candle turnover with a participation cap, not future fill-bar volume. This is a liquidity proxy, not verified order-book execution. 10 EUR minimum notional and unrestricted fractional quantities are conservative research conventions; historical instrument precision/rules are unavailable. Gaps contaminate the entire run. Missing entry data are counted explicitly. No bars are fabricated.
+Permanent dataset: https://chatgpt.com/library?file_id=libfile_a815d19f43b88191bbabad37c85c0653&account_id=personal
+Final digest and contents: dataset.json. Includes public candle chunks, 89 exact historical entry snapshots, original frozen gate outputs, recovery provenance and input audit. GitHub artifacts expire after 30 days and are only a temporary convenience.
 
-**Research variants are not exact frozen model equivalents.** They impose a 48h time exit, next-bar execution, standardized sizing and modeled spread. adaptive-exit-proxy uses the documented ATR/EMA runner exit and stop-width gate but cannot enforce the original historical 250k turnover / 500 EUR book-depth gates. dynamic-portfolio-proxy reproduces risk multipliers, not the complete context-based shadow engine.
+## Method and limitations
+Development Sep22–Oct10; validation Oct12–20 and Oct22–31, separated by 48h embargo. No fitting or automatic parameter selection. Original ten variants were fixed before outcome computation. The eleventh variant adds recovered original Adaptive entry market gates after the initial run, with no changed threshold; it remains exploratory.
 
-frozen_adapters.mjs calls unchanged libraries and can replay complete historical snapshots in order. Only a single-snapshot smoke test has been run locally; the compact signal journal cannot be passed off as complete snapshots. Reconstructing full historical snapshots from old Git commits remains a separate evidence-recovery route.
+Signal availableAt=max(snapshot,analysis timestamp). Execute at the next complete 5m open. Previous completed candle volume constrains notional (1% participation; 0.5% stress), never fill-bar volume. Fees on both legs, spread and adverse slippage, gap-down stop fills, stop before target, trailing changes active next bar, partial exit accounting, marked equity/drawdown, capital/position/risk/daily-loss constraints and censored positions are tracked. Same-timestamp candidates have deterministic score/market priority. Missing held bars contaminate the entire portfolio run rather than selectively excluding losses.
 
-The existing shadow table includes all available ledger closes, including pre-registration Strict trades. It is descriptive and cannot be compared as if all variants had the same period, entries or costs. The frozen experiment's existing prospective decision protocol remains authoritative.
+These are research implementations, not exact frozen model equivalents. They impose standardized sizing, next-bar execution, assumed spread and a 48h time exit. The adaptive-original-entry-gates variant calls unchanged qualifyEntry on exact archived entry snapshots, then uses research execution. No continuous order book, trade tape, historical tick/quantity precision or full snapshot timeline is reconstructed. Minimum notional is an explicit research convention of 10 EUR; fractional quantities are not exchange-precision constrained. Full frozen adapters require complete snapshots and have only a single-snapshot smoke test.
 
-## Local verification
-14 meaningful Python tests passed, plus the five existing analysis/paper/adaptive/exit/portfolio JS suites. Frozen hashes verified. Full npm test was not run locally because the connector checkout only includes the relevant libraries and suites. A partial local report is explicitly marked BLOCKED_ARCHIVE_ACCESS. The isolated workflow is intended to audit actual compressed archives and run historical simulations.
+The entry universe is conditioned on contemporaneous Strict BUYs in the selected deep-market universe. New filters/exits do not constitute a search of independent signals across all Bitvavo markets. Data are retrospective and validation is not pristine prospective evidence. Descriptive normal intervals are not selection-adjusted or dependence-robust. Small samples and contaminated runs prevent positive-evidence claims; original frozen prospective protocols remain authoritative.
 
-API contract checked 2026-10-31: https://docs.bitvavo.com/docs/rest-api/get-candlestick-data/
-Public GET candles, max 1440, OHLCV; zero-trade intervals may be absent. Bounded sequential calls stop at first network/rate-limit error. No retries or authenticated API access.
+Existing paper/shadow ledger summaries include differing periods, entries, assumptions and pre-registration Strict trades. They are descriptive only. See results/REPORT.md and results/report.json for the full comparison, limitations and provenance.
+
+API documentation checked 2026-10-31: https://docs.bitvavo.com/docs/rest-api/get-candlestick-data/

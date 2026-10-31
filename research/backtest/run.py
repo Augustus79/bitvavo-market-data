@@ -146,8 +146,8 @@ def main():
         bars=load_prices(root,args.cache)
     audit.update(recoveredEntryContexts=len(contexts),causalBuyEdges=len(sigs),priceMarkets={m:dict(bars=len(bs),start=iso(bs[0][0]),end=iso(bs[-1][0]),
         missing5mSlots=sum((b[0]-a[0])//STEP-1 for a,b in zip(bs,bs[1:]))) for m,bs in sorted(bars.items()) if bs},
-        fullHistoricalSnapshotsAvailable=False,orderBookHistoryAvailable=False,
-        interpretation='RESEARCH_PROXIES_ONLY; exact Adaptive entry liquidity gates cannot be reconstructed',
+        fullHistoricalSnapshotsAvailable=False,orderBookHistoryAvailable='ENTRY_POINTS_ONLY' if contexts else False,
+        interpretation='Entry liquidity gates recovered at exact timestamps; full timeline and execution remain research proxies' if contexts else 'RESEARCH_PROXIES_ONLY; entry liquidity gates unavailable',
         sourcePin=json.loads((HERE/'sources.json').read_text()))
     results=[]
     # Fixed before outcomes. Sep22-Oct10 is development; no fitted parameters.
@@ -170,7 +170,7 @@ def main():
         caveats=['All historical outcomes have previously existed: this is retrospective OOS, not pristine prospective evidence.',
             'Fixed variants; no automatic selection or refitting on validation.',
             'Journal is limited to the contemporaneously selected deep-market universe, with selection bias.',
-            'No historical order book, quoted spread, precision/minimum-order metadata or trade tape: only execution proxies.',
+            'Historical quotes/books recovered at entry points when contexts are present; no continuous order-book/trade tape or historical instrument precision metadata; execution remains modeled.',
             'OHLCV gaps can mean no trades or missing data; never forward-filled.',
             '48h holding limit changes frozen model economics; research proxies must not be named frozen Strict/Adaptive equivalents.',
             'Missing held bars contaminate complete portfolio runs; results not eligible as evidence.',
