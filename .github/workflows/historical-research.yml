@@ -1,0 +1,62 @@
+name: Isolated historical research
+on:
+  push:
+    branches: [research/historical-backtest-20261031]
+    paths: ['research/backtest/**', '.github/workflows/historical-research.yml']
+permissions:
+  contents: read
+concurrency:
+  group: isolated-historical-research
+  cancel-in-progress: false
+jobs:
+  offline-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify frozen sources and run offline tests
+        run: |
+          python research/backtest/verify_frozen.py
+          python -m unittest discover -s research/backtest -p 'test_*.py' -v
+          node analysis-engine.test.mjs
+          node paper-trader.test.mjs
+          node adaptive-shadow.test.mjs
+          node exit-shadow.test.mjs
+          node portfolio-shadow.test.mjs
+          node research/backtest/frozen_adapters.mjs > /tmp/adapter-smoke.json
+      - name: Audit archives and fetch public candles with bounded calls
+        run: |
+          python research/backtest/run.py --fetch-public --max-api-calls 120 > /tmp/research-summary.json
+          python research/backtest/verify_frozen.py
+          cat research/backtest/results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Print compact reproducible report
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('research/backtest/results/report.json')
+          if p.exists():
+            r=json.loads(p.read_text());a=r['audit']
+            print('RESEARCH_AUDIT',json.dumps({k:v for k,v in a.items() if k not in ('inputs','markets','priceMarkets','sourcePin')}))
+            print('RESEARCH_EXISTING_SHADOW',json.dumps(r['existingShadowDescriptive']))
+            for x in r['comparisons']:
+              print('RESEARCH_RESULT',json.dumps({k:v for k,v in x.items() if k not in ('trades','assumptions','censoredPositions','rejections')}))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-research
+          path: |
+            research/backtest/results/
+            research/backtest/cache/
+            /tmp/research-summary.json
+          retention-days: 30
