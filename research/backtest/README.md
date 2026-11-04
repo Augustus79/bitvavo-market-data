@@ -1,3 +1,30 @@
+# Mise à jour du 4 novembre 2026
+
+Lire d’abord [le bilan et le diagnostic](results/2026-11-04/SUMMARY.md). Les résultats du 31 octobre ci-dessous restent archivés séparément.
+
+Données figées au commit `564516019213a54f90ab8e6c4de5d4b3e530086e` (4 novembre à 16:35 UTC). Le protocole additionnel est `protocol-november.json`. Les 11 variantes existantes et leurs paramètres sont inchangés ; la nouvelle fenêtre commence après 48h d’embargo, le 2 novembre à 17:00 UTC. Les trois règles indépendantes sont exploratoires et ne constituent pas une validation aveugle.
+
+Le cache comprend désormais plusieurs versions de certaines bougies. `baseline-price-vintage.json` verrouille les 64 fichiers d’origine. Les désaccords sont conservés dans `cache/price-revisions.json` et les fenêtres concernées sont signalées. L’ordre des sources est explicite : cache d’origine, autres blocs API, snapshot courant. Aucun choix n’est fondé sur la performance.
+
+Données reproductibles : https://chatgpt.com/library?file_id=libfile_4176fce62eb88191b5c7781050ef306f&account_id=personal
+
+Vérifier le SHA-256 dans `results/2026-11-04/dataset.json`, puis extraire l’archive **à la racine du dépôt** : elle restaure `inputs-current/` et `research/backtest/cache/`. Elle contient 242 fichiers de données/provenance, sans credentials. Le manifeste DATASET-MANIFEST.json donne les empreintes des entrées et des scripts utilisés.
+
+Reproduire hors ligne, sans `--fetch-public` :
+
+```bash
+python -m unittest discover -s research/backtest -p 'test_*.py' -v
+python research/backtest/run.py --root inputs-current --protocol research/backtest/protocol-november.json --out /tmp/bitvavo-november
+python research/backtest/independent.py --root inputs-current --protocol research/backtest/protocol-november.json --cache research/backtest/cache --out /tmp/bitvavo-november
+python research/backtest/diagnose.py --root inputs-current --out /tmp/bitvavo-november
+```
+
+Les résultats finaux ont été reproduits hors ligne. 24 tests Python et cinq suites JS passent. La préparation de données peut être exécutée séparément avec `--prepare-data-only` pour que les calculs s’effectuent sur le cache final. Le workflow est limité à la branche de recherche et possède uniquement les permissions de lecture nécessaires. Aucun merge ni déploiement.
+
+---
+
+## État archivé au 31 octobre
+
 # Bitvavo historical research — isolated spot simulation
 
 All writes are on research/historical-backtest-20261031. No production workflows, frozen engines, protocol or account repository files are changed. No Bitvavo credentials or order client is used. GitHub snapshot recovery uses read-only repository GETs and an optional GH_TOKEN restricted to GitHub.

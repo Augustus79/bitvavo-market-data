@@ -159,6 +159,7 @@ def main():
     p.add_argument('--cache',type=pathlib.Path,default=HERE/'cache')
     p.add_argument('--fetch-public',action='store_true')
     p.add_argument('--protocol',type=pathlib.Path)
+    p.add_argument('--prepare-data-only',action='store_true',help='Verify/backfill inputs without computing simulations')
     p.add_argument('--max-api-calls',type=int,default=120)
     p.add_argument('--allow-partial',action='store_true',help='Only for connector-limited local audit; never a complete historical run')
     args=p.parse_args(); root=args.root; out=args.out
@@ -190,6 +191,9 @@ def main():
         interpretation='Entry liquidity gates recovered at exact timestamps; full timeline and execution remain research proxies' if contexts else 'RESEARCH_PROXIES_ONLY; entry liquidity gates unavailable',
         sourcePin=json.loads((HERE/'sources.json').read_text()),
         extensionProtocol=protocol)
+    if args.prepare_data_only:
+        write(out/'prepared-audit.json',audit)
+        return
     results=[]
     # Fixed before outcomes. Sep22-Oct10 is development; no fitted parameters.
     # Two subsequent non-overlapping validation windows, 48h purge/embargo.
