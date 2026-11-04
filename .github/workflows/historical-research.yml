@@ -50,8 +50,8 @@ jobs:
           node portfolio-shadow.test.mjs
       - uses: actions/download-artifact@v4
         with:
-          name: historical-research
-          run-id: 41225886947
+          name: historical-research-november
+          run-id: 41870968064
           github-token: ${{ github.token }}
           path: /tmp/previous-research
       - name: Reuse existing cache and recover only missing entry snapshots
@@ -63,6 +63,7 @@ jobs:
           candidates=[p for p in pathlib.Path('/tmp/previous-research').rglob('cache') if p.is_dir()]
           assert len(candidates)==1,'Ambiguous prior cache'
           shutil.copytree(candidates[0],'research/backtest/cache',dirs_exist_ok=True)
+          shutil.copyfile('research/backtest/cache/fetch-log.json','research/backtest/cache/initial-extension-fetch-log.json')
           PY
           python research/backtest/recover_contexts.py --root inputs-current
           node research/backtest/qualify_contexts.mjs

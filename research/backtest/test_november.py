@@ -1,9 +1,10 @@
 import copy
+import json
 import math
 import pathlib
 import tempfile
 import unittest
-from core import STEP
+from core import STEP,digest
 from diagnose import summarize
 from independent import aggregate_hours,independent_signals
 
@@ -42,6 +43,27 @@ class NovemberTests(unittest.TestCase):
         d=summarize([r]);self.assertAlmostEqual(d['accounting']['identityResidualEur'],0)
         self.assertEqual(d['accounting']['grossWinningButNetNonpositive'],1)
         self.assertEqual(d['excursions']['sample'],0)
+    def test_candle_vintage_precedence_is_explicit_and_audited(self):
+        import run
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td);cache=root/'cache';cache.mkdir()
+            (root/'snapshot.json').write_text(json.dumps(dict(collectedAt='2026-11-04T00:00:00Z',deep={})))
+            for name,close in [('original.json',100),('revised.json',101)]:
+                rows=[[0,100,102,99,close,10]]
+                (cache/name).write_text(json.dumps(dict(schema='public-candles-cache-v1',market='TEST-EUR',bars=rows,sha256=digest(json.dumps(rows,separators=(',',':')).encode()))))
+            d=json.loads((cache/'original.json').read_text())
+            (root/'baseline-price-vintage.json').write_text(json.dumps(dict(files={'original.json':d['sha256']})))
+            saved=run.HERE
+            try:
+                run.HERE=root
+                chosen=run.load_prices(root,cache)
+                self.assertEqual(chosen['TEST-EUR'][0][4],100)
+                audit=json.loads((cache/'price-revisions.json').read_text())
+                self.assertEqual(audit['conflictingMarketBars'],1)
+                self.assertEqual(audit['conflicts'][0]['alternatives'][0]['bar'][4],101)
+                (root/'baseline-price-vintage.json').unlink()
+                with self.assertRaises(ValueError):run.load_prices(root,cache)
+            finally:run.HERE=saved
     def test_signal_available_only_after_completed_bar(self):
         ss=independent_signals('TEST-EUR',self.rows(1000))
         self.assertGreater(sum(map(len,ss.values())),0)

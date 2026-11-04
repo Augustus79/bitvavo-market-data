@@ -19,20 +19,57 @@ def write(path,obj):
     path.write_text(json.dumps(obj,indent=2,sort_keys=True,allow_nan=False)+'\n')
 
 def load_prices(root,cache):
-    bars=collections.defaultdict(list)
-    snapshot=json.loads((root/'snapshot.json').read_text())
-    cutoff=ms(snapshot['collectedAt'])
+    """Preserve original pinned vintage; log every cross-source discrepancy.
+
+    This policy is opt-in via baseline-price-vintage.json. Conflicts within a
+    single source still fail in validate_bars; cache checksums always fail closed.
+    Priority: original Oct31 cache, then other cached API chunks, then current
+    snapshot. Filename order breaks ties deterministically. No source is edited.
+    """
+    snapshot=json.loads((root/'snapshot.json').read_text());cutoff=ms(snapshot['collectedAt'])
+    manifest_path=HERE/'baseline-price-vintage.json'
+    manifest=json.loads(manifest_path.read_text())['files'] if manifest_path.exists() else None
+    sources=[]
     for m,d in snapshot.get('deep',{}).items():
-        bars[m].extend(b for b in d.get('candles',{}).get('5m',[]) if float(b[0])+STEP<=cutoff)
+        rows=[b for b in d.get('candles',{}).get('5m',[]) if float(b[0])+STEP<=cutoff]
+        sources.append((2,'snapshot.json@'+snapshot['collectedAt'],m,validate_bars(rows)))
     if cache.exists():
         for p in sorted(cache.glob('*.json')):
-            if p.name in ('fetch-log.json','recovery-log.json','entry-contexts.json'): continue
             obj=json.loads(p.read_text())
-            if obj.get('schema')!='public-candles-cache-v1': continue
+            if obj.get('schema')!='public-candles-cache-v1':continue
             if digest(json.dumps(obj['bars'],separators=(',',':')).encode())!=obj['sha256']:
                 raise ValueError(f'Cache checksum mismatch {p}')
-            bars[obj['market']].extend(obj['bars'])
-    return {m:validate_bars(bs) for m,bs in bars.items()}
+            priority=1
+            if manifest is not None and p.name in manifest:
+                if obj['sha256']!=manifest[p.name]:raise ValueError(f'Original vintage changed: {p.name}')
+                priority=0
+            sources.append((priority,p.name,obj['market'],validate_bars(obj['bars'])))
+    chosen={};conflicts={}
+    for priority,source,m,rows in sorted(sources,key=lambda x:(x[0],x[1],x[2])):
+        for b in rows:
+            key=(m,b[0])
+            if key not in chosen:chosen[key]=(source,b)
+            elif chosen[key][1]!=b:
+                if manifest is None:raise ValueError('Conflicting OHLCV duplicate without registered vintage policy')
+                c=conflicts.setdefault(key,dict(market=m,timestamp=b[0],chosenSource=chosen[key][0],chosenBar=chosen[key][1],alternatives=[]))
+                c['alternatives'].append(dict(source=source,bar=b))
+    if manifest is not None:
+        write(cache/'price-revisions.json',dict(policy='Original Oct31 cache, other cached API chunks, then snapshot; source names break ties',
+            conflictingMarketBars=len(conflicts),conflicts=[conflicts[k] for k in sorted(conflicts)]))
+    bars=collections.defaultdict(list)
+    for (m,t),(source,b) in sorted(chosen.items()):bars[m].append(b)
+    return dict(bars)
+
+
+def flag_price_revisions(result,cache,start,end,markets,warmup=0):
+    path=cache/'price-revisions.json'
+    conflicts=json.loads(path.read_text())['conflicts'] if path.exists() else []
+    n=sum(c['market'] in markets and start-warmup<=c['timestamp']<end for c in conflicts)
+    result['priceRevisionBarsInWindow']=n
+    result['priceVintagePolicy']='original-cache-first; alternatives retained'
+    if n:result['dataStatus']='CONTAMINATED_PRICE_REVISIONS'
+    return result
+
 
 def backfill(signals,bars,cache,cutoff,budget):
     """Only GET /v2/{EUR market}/candles, no authentication, no private endpoint.
@@ -168,6 +205,7 @@ def main():
                 for stress in (False,True):
                     c=cfg|dict(spreadPct=.25,slipPct=.10,stopSlipPct=.80,participation=.005) if stress else cfg
                     r=simulate(sigs,bars,c,start,end)
+                    flag_price_revisions(r,args.cache,start,end,{s['market'] for s in sigs})
                     r.update(window=window,start=iso(start),end=iso(end),variant=name,stress=stress)
                     results.append(r)
     output=dict(audit=audit,existingShadowDescriptive=descriptive(root),comparisons=results,
@@ -176,6 +214,7 @@ def main():
             'Fixed variants; no automatic selection or refitting on validation.',
             'Journal is limited to the contemporaneously selected deep-market universe, with selection bias.',
             'Historical quotes/books recovered at entry points when contexts are present; no continuous order-book/trade tape or historical instrument precision metadata; execution remains modeled.',
+            'Conflicting cross-source candle vintages are preserved and logged; original Oct31 cache is selected first, then API cache, then snapshot; affected windows are not clean evidence.',
             'OHLCV gaps can mean no trades or missing data; never forward-filled.',
             '48h holding limit changes frozen model economics; research proxies must not be named frozen Strict/Adaptive equivalents.',
             'Missing held bars contaminate complete portfolio runs; results not eligible as evidence.',

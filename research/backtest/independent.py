@@ -7,7 +7,7 @@ import math
 import pathlib
 import statistics
 from core import STEP, iso, ms, simulate, validate_bars
-from run import backfill, load_prices, variants, write
+from run import backfill, flag_price_revisions, load_prices, variants, write
 
 
 def ema(values,period):
@@ -83,6 +83,7 @@ def main():
                 cfg=base|dict(exit='target' if name=='mean-reversion' else 'trail-1.5r')
                 if stress:cfg|=dict(spreadPct=.25,slipPct=.1,stopSlipPct=.8,participation=.005)
                 r=simulate(signals.get(name,[]),bars,cfg,ms(left),min(ms(right),cutoff//STEP*STEP))
+                flag_price_revisions(r,a.cache,ms(left),min(ms(right),cutoff//STEP*STEP),set(bars),600*STEP)
                 r.update(variant=name,window=window,stress=stress,scope='EXPLORATORY_INDEPENDENT_ENTRY_RESEARCH')
                 results.append(r)
     audit=dict(universe=protocol['independentUniverse'],signalCounts={k:len(v) for k,v in signals.items()},
