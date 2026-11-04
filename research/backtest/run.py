@@ -121,15 +121,18 @@ def main():
     p.add_argument('--out',type=pathlib.Path,default=HERE/'results')
     p.add_argument('--cache',type=pathlib.Path,default=HERE/'cache')
     p.add_argument('--fetch-public',action='store_true')
+    p.add_argument('--protocol',type=pathlib.Path)
     p.add_argument('--max-api-calls',type=int,default=120)
     p.add_argument('--allow-partial',action='store_true',help='Only for connector-limited local audit; never a complete historical run')
     args=p.parse_args(); root=args.root; out=args.out
+    protocol=json.loads(args.protocol.read_text()) if args.protocol else None
     manifest_paths=list((root/'history').glob('signals-????-??/manifest.json'))
     missing=[]
     for path in manifest_paths:
         m=json.loads(path.read_text())
         for name in [x['file'] for x in m['sealed']]+[f"{m['activePart']:06}.jsonl"]:
             if not (path.parent/name).exists(): missing.append(str(path.parent.name+'/'+name))
+    if not manifest_paths: raise ValueError('No journal manifests found; refusing an empty historical run')
     partial=bool(missing)
     if partial and not args.allow_partial: raise ValueError(f'Missing journal parts: {missing}')
     if partial:
@@ -148,13 +151,15 @@ def main():
         missing5mSlots=sum((b[0]-a[0])//STEP-1 for a,b in zip(bs,bs[1:]))) for m,bs in sorted(bars.items()) if bs},
         fullHistoricalSnapshotsAvailable=False,orderBookHistoryAvailable='ENTRY_POINTS_ONLY' if contexts else False,
         interpretation='Entry liquidity gates recovered at exact timestamps; full timeline and execution remain research proxies' if contexts else 'RESEARCH_PROXIES_ONLY; entry liquidity gates unavailable',
-        sourcePin=json.loads((HERE/'sources.json').read_text()))
+        sourcePin=json.loads((HERE/'sources.json').read_text()),
+        extensionProtocol=protocol)
     results=[]
     # Fixed before outcomes. Sep22-Oct10 is development; no fitted parameters.
     # Two subsequent non-overlapping validation windows, 48h purge/embargo.
     windows=[('development','2026-09-22T16:00:00Z','2026-10-10T00:00:00Z'),
         ('validation-1','2026-10-12T00:00:00Z','2026-10-20T00:00:00Z'),
         ('validation-2','2026-10-22T00:00:00Z','2026-10-31T17:00:00Z')]
+    if protocol: windows=protocol['windows']
     if not partial:
         for window,a,b in windows:
             start,end=ms(a),min(ms(b),cutoff//STEP*STEP)

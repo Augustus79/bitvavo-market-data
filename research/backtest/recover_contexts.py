@@ -1,4 +1,5 @@
 """Recover exact entry snapshots from Git history, read-only GitHub HTTPS only."""
+import argparse
 import base64
 import datetime
 import json
@@ -20,7 +21,8 @@ def get(path):
     with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
 
 def main():
-    rows,_=load_journal(ROOT);sigs=signals_from(rows)
+    parser=argparse.ArgumentParser();parser.add_argument('--root',type=pathlib.Path,default=ROOT)
+    args=parser.parse_args();rows,_=load_journal(args.root);sigs=signals_from(rows)
     wanted={ms(s['snapshotAt']):s['snapshotAt'] for s in sigs}
     out=HERE/'cache'/'entry-snapshots';out.mkdir(parents=True,exist_ok=True)
     log=[]
