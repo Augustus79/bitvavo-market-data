@@ -1,0 +1,117 @@
+name: Isolated historical research
+on:
+  push:
+    branches: [research/historical-backtest-20261031]
+    paths: ['research/backtest/**', '.github/workflows/historical-research.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-historical-research
+  cancel-in-progress: false
+jobs:
+  offline-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          repository: Augustus79/bitvavo-market-data
+          ref: 564516019213a54f90ab8e6c4de5d4b3e530086e
+          path: inputs-current
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify both pinned frozen sources and run offline tests
+        run: |
+          python research/backtest/verify_frozen.py
+          python - <<'PY'
+          import pathlib,json,hashlib
+          root=pathlib.Path('inputs-current')
+          for item in json.loads(pathlib.Path('research/backtest/sources.json').read_text())['frozen']:
+            b=(root/item['path']).read_bytes()
+            assert hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()==item['sha'],item['path']
+          print('Latest input frozen sources verified')
+          PY
+          python -m unittest discover -s research/backtest -p 'test_*.py' -v
+          node analysis-engine.test.mjs
+          node paper-trader.test.mjs
+          node adaptive-shadow.test.mjs
+          node exit-shadow.test.mjs
+          node portfolio-shadow.test.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: historical-research-november
+          run-id: 41871724030
+          github-token: ${{ github.token }}
+          path: /tmp/previous-research
+      - name: Reuse existing cache and recover only missing entry snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import pathlib,shutil
+          candidates=[p for p in pathlib.Path('/tmp/previous-research').rglob('cache') if p.is_dir()]
+          assert len(candidates)==1,'Ambiguous prior cache'
+          shutil.copytree(candidates[0],'research/backtest/cache',dirs_exist_ok=True)
+          if not pathlib.Path('research/backtest/cache/initial-extension-fetch-log.json').exists():
+            shutil.copyfile('research/backtest/cache/fetch-log.json','research/backtest/cache/initial-extension-fetch-log.json')
+          PY
+          python research/backtest/recover_contexts.py --root inputs-current
+          node research/backtest/qualify_contexts.mjs
+      - name: Extend unchanged models and diagnose existing paper ledger
+        run: |
+          python research/backtest/run.py --root inputs-current --protocol research/backtest/protocol-november.json --out research/backtest/results/2026-11-04 --fetch-public --max-api-calls 80 --prepare-data-only > /tmp/research-summary.json
+          cp research/backtest/cache/fetch-log.json research/backtest/cache/strict-extension-fetch-log.json
+          python research/backtest/diagnose.py --root inputs-current --out research/backtest/results/2026-11-04
+      - name: Test registered independent entry rules with reused data
+        run: |
+          python research/backtest/independent.py --root inputs-current --out research/backtest/results/2026-11-04 --protocol research/backtest/protocol-november.json --cache research/backtest/cache --fetch-public
+          python research/backtest/run.py --root inputs-current --protocol research/backtest/protocol-november.json --out research/backtest/results/2026-11-04 > /tmp/research-summary.json
+          python research/backtest/verify_frozen.py
+          cat research/backtest/results/2026-11-04/DIAGNOSIS.md >> "$GITHUB_STEP_SUMMARY"
+          cat research/backtest/results/2026-11-04/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          cat research/backtest/results/2026-11-04/INDEPENDENT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Print compact extension report
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('research/backtest/results/2026-11-04')
+          p=root/'report.json'
+          if p.exists():
+            r=json.loads(p.read_text());a=r['audit']
+            print('RESEARCH_AUDIT',json.dumps({k:v for k,v in a.items() if k not in ('inputs','markets','priceMarkets','sourcePin','extensionProtocol')}))
+            for x in r['comparisons']:
+              if x['window']=='validation-3-november': print('NOVEMBER_RESULT',json.dumps({k:v for k,v in x.items() if k not in ('trades','assumptions','censoredPositions')}))
+          for name in ['strict-extension-fetch-log.json','independent-fetch-log.json']:
+            p=pathlib.Path('research/backtest/cache')/name
+            if p.exists():
+              r=json.loads(p.read_text());print('FETCH_SUMMARY',name,json.dumps(dict(apiCalls=r['apiCalls'],plannedChunks=r['plannedChunks'],errors=[x for x in r['events'] if x['status']!='OK'])))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-research-november
+          path: |
+            research/backtest/results/2026-11-04/
+            research/backtest/cache/
+            research/backtest/protocol-november.json
+            inputs-current/history/
+            inputs-current/snapshot.json
+            inputs-current/paper/trades.jsonl
+            inputs-current/adaptive-shadow/trades.jsonl
+            inputs-current/exit-shadow/trades.jsonl
+            inputs-current/portfolio-shadow/trades.jsonl
+            inputs-current/experiment/protocol.json
+            inputs-current/evaluation/latest.json
+          retention-days: 30
