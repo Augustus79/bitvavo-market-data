@@ -72,7 +72,7 @@ def passive(bars,cfg,start,end):
                 cost=min(nominal,cash,prev[5]*prev[4]*cfg['participation'])
                 entry=b[1]*(1+spread/2+slip);qty=cost/(entry*(1+fee))
                 if cost<10:missingEntries.append(m);continue
-                positions[m]=dict(qty=qty,last=b[1],entry=entry);cash-=cost
+                positions[m]=dict(qty=qty,last=b[1],entry=entry,allocatedEur=cost);cash-=cost
         for m,p in positions.items():
             b=maps[m].get(t)
             if b:p['last']=b[4]
@@ -83,7 +83,8 @@ def passive(bars,cfg,start,end):
     return dict(model='buy-hold-equal4',terminalEquityEur=terminal,netReturnPct=100*(terminal/initial-1),netLiquidationPnlEur=terminal-initial,
         maxMarkedDrawdownPct=dd,closedTrades=None,meanNetR=None,openPositions=len(positions),missingEntryMarkets=missingEntries,
         missingHeldBars=missingHeld,dataStatus='CONTAMINATED_GAPS' if missingHeld or missingEntries else 'NO_OBSERVED_HOLDING_GAPS',
-        riskScope='Market reference: full initial exposure, no stops, not risk-matched to strategy portfolios')
+        initialInvestedEur=initial-cash,uninvestedCashEur=cash,entryAllocationsEur={m:p['allocatedEur'] for m,p in positions.items()},
+        riskScope='Market reference: targets equal weights, volume participation can leave cash; no stops, not risk-matched to strategy portfolios')
 
 
 def report_markdown(output):
@@ -144,7 +145,7 @@ def main():
         decision='PRELIMINARY_NO_WINNER',limitations=[
             'About two months of prices: enough for a first view, not proof across market regimes; 4h trade counts may be very small.',
             'No tuning or automatic model selection; current and earlier market/Strict outcomes were already visible. Final chronological window is not pristine prospective evidence.',
-            'Each model has the same 300 EUR capital and risk limits; passive buy-and-hold uses full exposure without stops, so its risk is different.',
+            'Each strategy has the same 300 EUR capital and risk limits. Passive buy-and-hold targets equal weights but may leave cash due to volume participation limits; no stops, so its risk/exposure differs. Stress changes both costs and liquidity, so lower stress losses do not demonstrate cost robustness.',
             'All costs and liquidity are modeled. Spot only, previous 5m volume participation, next 5m open, adverse stop slippage and stop-first intrabar policy.',
             'Max hold 168h for all six models; positions open at cutoff remain censored. Marked return includes estimated liquidation costs; mean R counts closed trades only.',
             'A higher-timeframe candle is rejected if any underlying 5m candle is missing; no interpolation. Indicator history resets on missing higher bars.',

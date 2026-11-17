@@ -56,6 +56,13 @@ class HigherTimeframeTests(unittest.TestCase):
         r=passive({'TEST-EUR':rows},cfg,0,5*STEP)
         self.assertAlmostEqual(r['terminalEquityEur'],300*(1-.0025)/(1+.0025))
         self.assertLess(r['netReturnPct'],0)
+    def test_buy_hold_volume_limit_leaves_explicit_cash(self):
+        cfg=dict(capital=300,feePct=.25,spreadPct=0,slipPct=0,participation=.01)
+        rows=[[i*STEP,100,100,100,100,10] for i in range(5)]
+        r=passive({'TEST-EUR':rows},cfg,0,5*STEP)
+        self.assertEqual(r['initialInvestedEur'],10)
+        self.assertEqual(r['uninvestedCashEur'],290)
+        self.assertEqual(r['entryAllocationsEur'],{'TEST-EUR':10})
     def test_buy_hold_missing_data_is_not_clean(self):
         cfg=dict(capital=300,feePct=.25,spreadPct=.1,slipPct=.03,participation=.01)
         rows=[[i*STEP,100,100,100,100,100000] for i in range(5) if i!=3]

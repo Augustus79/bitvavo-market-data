@@ -52,8 +52,8 @@ jobs:
           node portfolio-shadow.test.mjs
       - uses: actions/download-artifact@v4
         with:
-          name: historical-research-november
-          run-id: 41871724030
+          name: higher-timeframe-research
+          run-id: 44086135459
           github-token: ${{ github.token }}
           path: /tmp/previous-research
       - name: Reuse only registered market price chunks
@@ -61,7 +61,7 @@ jobs:
           python - <<'PY'
           import pathlib,json,shutil
           universe=json.loads(pathlib.Path('research/backtest/higher-protocol.json').read_text())['universe']
-          candidates=[p for p in pathlib.Path('/tmp/previous-research').rglob('cache') if p.is_dir()]
+          candidates=[p for p in pathlib.Path('/tmp/previous-research').rglob('*') if p.is_dir() and p.name in ('cache','higher-cache')]
           assert len(candidates)==1,'Ambiguous prior cache'
           out=pathlib.Path('research/backtest/higher-cache');out.mkdir(parents=True,exist_ok=True)
           count=0
