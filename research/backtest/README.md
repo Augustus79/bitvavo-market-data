@@ -1,3 +1,27 @@
+# Modèles sur 1 h et 4 h — 17 novembre 2026
+
+[Première comparaison et limites](results/2026-11-17/HIGHER_SUMMARY.md) · [Toutes les fenêtres et scénarios](results/2026-11-17/HIGHER_REPORT.md)
+
+Six modèles indépendants de Strict : tendance sur repli, cassure et retour à la moyenne, sur 1 h et 4 h. Règles fixées avant les résultats dans higher-protocol.json. Simulation continue du 1er octobre au 17 novembre, développement et deux fenêtres chronologiques avec sept jours d'embargo ; 300 EUR et mêmes contraintes de risque pour les six modèles. Aucun modèle retenu ; les échantillons restent petits.
+
+Références : euros et achat-conservation ciblant quatre poids égaux mais plafonné par la liquidité. Le capital effectivement investi et le cash restant sont reportés ; ce benchmark n'est pas un portefeuille de risque équivalent aux stratégies. Une correction de présentation a ajouté cette télémétrie après le premier calcul sans changer aucun des 60 résultats économiques.
+
+CI finale réussie : run 44087423589, 34 tests Python et cinq suites JS. JSON reproduit exactement hors ligne ; moteurs/protocole frozen inchangés. Douze nouveaux appels publics de bougies lors de l'acquisition initiale, zéro appel supplémentaire pour la vérification finale. Les autres recherches n'ont pas été recalculées inutilement : les filtres du workflow de novembre sont limités à leurs propres sources.
+
+Données persistantes : https://chatgpt.com/library?file_id=libfile_fde3_f-6be69de0333081918dca918d329625c1_7d0fcd24ccf88191b779961f31cc74ad&account_id=personal
+
+Vérifier le SHA-256 dans results/2026-11-17/higher-dataset.json puis extraire à la racine du dépôt. L'archive restaure higher-inputs/snapshot.json et research/backtest/higher-cache/ ; son manifeste contient les empreintes des entrées et des scripts. Reproduction sans API :
+
+```bash
+python research/backtest/higher.py --root higher-inputs --cache research/backtest/higher-cache --protocol research/backtest/higher-protocol.json --out /tmp/higher-replay
+```
+
+Les données couvrent environ deux mois et certains trous interrompent les 60 bougies consécutives de chauffe, surtout sur 4 h. Révisions de prix conservées et fenêtres sensibles signalées. Une performance sur cette période n'est pas une preuve prospective. Aucun ordre, modification du live, changement frozen, déploiement ou merge.
+
+---
+
+## Recherches archivées précédentes
+
 # Mise à jour du 4 novembre 2026
 
 Lire d’abord [le bilan et le diagnostic](results/2026-11-04/SUMMARY.md). Les résultats du 31 octobre ci-dessous restent archivés séparément.
