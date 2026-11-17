@@ -1,0 +1,101 @@
+name: Higher timeframe historical research
+on:
+  push:
+    branches: [research/historical-backtest-20261031]
+    paths:
+      - research/backtest/higher.py
+      - research/backtest/higher-protocol.json
+      - research/backtest/test_higher.py
+      - .github/workflows/higher-timeframe-research.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-higher-timeframe-research
+  cancel-in-progress: false
+jobs:
+  historical-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Augustus79/bitvavo-market-data
+          ref: 52b4a2aec25ea6eafde3be81997cf78455dd7429
+          path: higher-inputs
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify frozen engines and run regression tests
+        run: |
+          python research/backtest/verify_frozen.py
+          python - <<'PY'
+          import pathlib,json,hashlib
+          root=pathlib.Path('higher-inputs')
+          for item in json.loads(pathlib.Path('research/backtest/sources.json').read_text())['frozen']:
+            b=(root/item['path']).read_bytes()
+            assert hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()==item['sha'],item['path']
+          print('Both frozen source pins verified')
+          PY
+          python -m unittest discover -s research/backtest -p 'test_*.py' -v
+          node analysis-engine.test.mjs
+          node paper-trader.test.mjs
+          node adaptive-shadow.test.mjs
+          node exit-shadow.test.mjs
+          node portfolio-shadow.test.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: historical-research-november
+          run-id: 41871724030
+          github-token: ${{ github.token }}
+          path: /tmp/previous-research
+      - name: Reuse only registered market price chunks
+        run: |
+          python - <<'PY'
+          import pathlib,json,shutil
+          universe=json.loads(pathlib.Path('research/backtest/higher-protocol.json').read_text())['universe']
+          candidates=[p for p in pathlib.Path('/tmp/previous-research').rglob('cache') if p.is_dir()]
+          assert len(candidates)==1,'Ambiguous prior cache'
+          out=pathlib.Path('research/backtest/higher-cache');out.mkdir(parents=True,exist_ok=True)
+          count=0
+          for p in sorted(candidates[0].glob('*.json')):
+            r=json.loads(p.read_text())
+            if r.get('schema')=='public-candles-cache-v1' and r['market'] in universe:
+              shutil.copyfile(p,out/p.name);count+=1
+          assert count>0,'No reusable candles'
+          print('Reused price chunks',count)
+          PY
+      - name: Audit and run six registered models plus references
+        run: |
+          python research/backtest/higher.py --root higher-inputs --cache research/backtest/higher-cache --protocol research/backtest/higher-protocol.json --out research/backtest/results/2026-11-17 --fetch-public > /tmp/higher-summary.log
+          cat /tmp/higher-summary.log
+          cat research/backtest/results/2026-11-17/HIGHER_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify exact offline reproducibility
+        run: |
+          python research/backtest/higher.py --root higher-inputs --cache research/backtest/higher-cache --protocol research/backtest/higher-protocol.json --out /tmp/higher-offline > /tmp/higher-offline.log
+          cmp research/backtest/results/2026-11-17/higher-report.json /tmp/higher-offline/higher-report.json
+          python research/backtest/verify_frozen.py
+          python - <<'PY'
+          import pathlib,json
+          p=pathlib.Path('research/backtest/higher-cache/higher-acquisition.json')
+          r=json.loads(p.read_text())
+          print('HIGHER_ACQUISITION',json.dumps({'apiCalls':r['apiCalls'],'plannedChunks':r['plannedChunks'],'errors':[x for x in r['events'] if x['status']!='OK']}))
+          print('OFFLINE_REPRODUCTION_EXACT')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: higher-timeframe-research
+          path: |
+            research/backtest/results/2026-11-17/
+            research/backtest/higher-cache/
+            research/backtest/higher-protocol.json
+            higher-inputs/snapshot.json
+          retention-days: 30
