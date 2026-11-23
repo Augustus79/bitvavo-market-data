@@ -1,0 +1,50 @@
+{
+  "id": "historical-research-november-v1",
+  "registeredOn": "2026-11-04",
+  "inputRepository": "Augustus79/bitvavo-market-data",
+  "inputCommit": "564516019213a54f90ab8e6c4de5d4b3e530086e",
+  "inputCutoff": "2026-11-04T16:35:56.451Z",
+  "researchBaseCommit": "ee9688e9fa4968b3197ae30378d57ac01d5c2fb5",
+  "windows": [
+    [
+      "development",
+      "2026-09-22T16:00:00Z",
+      "2026-10-10T00:00:00Z"
+    ],
+    [
+      "validation-1",
+      "2026-10-12T00:00:00Z",
+      "2026-10-20T00:00:00Z"
+    ],
+    [
+      "validation-2",
+      "2026-10-22T00:00:00Z",
+      "2026-10-31T17:00:00Z"
+    ],
+    [
+      "validation-3-november",
+      "2026-11-02T17:00:00Z",
+      "2026-11-04T16:35:00Z"
+    ]
+  ],
+  "embargoHours": 48,
+  "existingVariants": "Unchanged 11 variants and original cost assumptions; no refit",
+  "independentUniverse": [
+    "BTC-EUR",
+    "ETH-EUR",
+    "SOL-EUR",
+    "XRP-EUR"
+  ],
+  "independentDataStart": "2026-09-18T00:00:00Z",
+  "independentStrategies": {
+    "donchian-breakout": "Completed 5m close > preceding 20-bar high; volume >1.5x preceding 20-bar mean; completed hourly EMA20>EMA50; stop close-2ATR14(5m); target checkpoint close+3 structural R; 1.5R runner after checkpoint",
+    "trend-pullback": "Hourly EMA20>EMA50; previous 5m close<=previous EMA20 and current close>EMA20; RSI14 in [40,60]; stop lowest recent 5-bar low-0.5ATR14(5m); checkpoint 3 structural R; 1.5R runner",
+    "mean-reversion": "Previous close below previous lower Bollinger20(2 population stdev); current close reclaims lower band; RSI14<=40; last completed hourly close>=EMA50; stop 5-bar low-0.5ATR14(5m); exit target EMA20"
+  },
+  "indicatorConventions": "Recomputed EMA over latest 600 contiguous 5m bars, hourly EMA over latest 50 complete UTC hours; SMA RSI14; gap resets 5m indicator history; aggregate hours require all 12 bars; independent entries are rising edges; signal availability candle close +1ms",
+  "independentExecution": "Reuse unchanged research execution, sizing and cost scenarios. For breakout/pullback target is a checkpoint, not full take profit; common 48h max hold. No book/spread history outside recovered Strict entry snapshots, so liquidity remains a previous-bar-volume proxy.",
+  "inference": "Existing aggregate outcomes through Nov4 were already viewed. Extension is chronological retrospective evidence, not pristine blind holdout. Independent rules fixed before their outcomes, but historical windows remain exploratory. No parameter optimization and no winner selection.",
+  "diagnosticScope": "Fixed executed paper ledger arithmetic and excursions; no causal attribution, no claimed tradable MFE counterfactual",
+  "safety": "Research branch only; no frozen source/protocol edits, no live mutation, no orders, no merge",
+  "dataIntegrityAmendment": "Before outcomes: run 41870968064 halted on conflicting OHLCV vintages. Preserve every source, pin original Oct31 cache using baseline-price-vintage.json, prefer original cache then other API chunks then latest snapshot, deterministic source-name tie break. Audit all alternatives and flag affected windows, including 600-bar warmup for independent signals. No model threshold or execution rule changes."
+}
