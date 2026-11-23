@@ -2,9 +2,9 @@
   "engineVersion": "0.6",
   "modelStatus": "experimental-unvalidated",
   "snapshotVersion": "2.2",
-  "snapshotCollectedAt": "2026-11-23T19:35:54.734Z",
-  "analyzedAt": "2026-11-23T19:35:56.220Z",
-  "snapshotAgeMin": 0.02,
+  "snapshotCollectedAt": "2026-11-23T19:41:02.743Z",
+  "analyzedAt": "2026-11-23T19:41:04.243Z",
+  "snapshotAgeMin": 0.03,
   "snapshotFresh": true,
   "btcRegime": "neutral",
   "config": {
@@ -30,55 +30,203 @@
   "actionable": [],
   "signals": [
     {
-      "market": "ELSA-EUR",
+      "market": "INX-EUR",
       "action": "WAIT",
       "setupState": "ARMED",
-      "family": "trend pullback",
+      "family": "momentum/relative strength",
       "contextGrade": "A",
       "tradeGrade": null,
       "contextScore": 8,
       "score": 8,
       "trigger": false,
       "triggerReasons": [
-        "pullback zone reached",
-        "closed 5m participation confirmed"
+        "multi-timeframe trend aligned",
+        "intraday momentum/relative strength confirmed",
+        "active volume confirmed"
+      ],
+      "blockers": [
+        "data quality gate failed",
+        "entry trigger absent",
+        "net structural R/R below threshold"
+      ],
+      "btcRegime": "neutral",
+      "entry": 0.003835,
+      "stop": 0.0037405714285714286,
+      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
+      "target": 0.003884,
+      "targetMethod": "nearest 15m/1h structural resistance",
+      "riskPct": 2.4622834792326276,
+      "grossRewardPct": 1.2777053455019556,
+      "roundTripCostPct": 0.660463144161769,
+      "netRR": 0.2,
+      "suggestedRiskEur": null,
+      "suggestedAmountEur": null,
+      "candidateScores": {
+        "momentum/relative strength": 8,
+        "trend pullback": 5.5,
+        "confirmed breakout": 4.5,
+        "mean reversion": 4.5
+      },
+      "metrics": {
+        "5m": {
+          "last": 0.003841,
+          "lastOpen": 0.003828,
+          "lastBullish": true,
+          "ema20": 0.0037468509410642174,
+          "ema50": 0.003611746872028867,
+          "atr": 0.0000496428571428571,
+          "atrPct": 1.2924461635734732,
+          "trend": 1,
+          "breakout": false,
+          "breakdown": false,
+          "volumeRatio": 0.6563106728786476,
+          "high20": 0.003884,
+          "low20": 0.003582,
+          "ret1h": null,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "15m": {
+          "last": 0.003827,
+          "lastOpen": 0.003779,
+          "lastBullish": true,
+          "ema20": 0.0035625041389493496,
+          "ema50": 0.003325573451580184,
+          "atr": 0.0000937142857142857,
+          "atrPct": 2.4487662846690803,
+          "trend": 1,
+          "breakout": false,
+          "breakdown": false,
+          "volumeRatio": 2.387948528772554,
+          "high20": 0.003884,
+          "low20": 0.003116,
+          "ret1h": 1.350635593220346,
+          "ret4h": null,
+          "quality": {
+            "ok": false,
+            "count": 119,
+            "missingIntervals": 6,
+            "maxGapIntervals": 1
+          }
+        },
+        "1h": {
+          "last": 0.003759,
+          "lastOpen": 0.003626,
+          "lastBullish": true,
+          "ema20": 0.0031880815299071327,
+          "ema50": 0.0030024006000302166,
+          "atr": 0.0001704285714285715,
+          "atrPct": 4.533880591342684,
+          "trend": 1,
+          "breakout": true,
+          "breakdown": false,
+          "volumeRatio": 1.6438507895829362,
+          "high20": 0.003653,
+          "low20": 0.002829,
+          "ret1h": null,
+          "ret4h": 15.412956708627581,
+          "quality": {
+            "ok": false,
+            "count": 119,
+            "missingIntervals": 4,
+            "maxGapIntervals": 2
+          }
+        },
+        "relative1hVsBTC": 1.6515205489725584,
+        "relative4hVsBTC": 17.514322857339646,
+        "book": {
+          "imbalance": 0.09229211626083958,
+          "bidDepth10": 9584.1287146245,
+          "askDepth10": 7964.5262137533,
+          "levels": {
+            "bids": 10,
+            "asks": 10
+          }
+        }
+      },
+      "dataQuality": {
+        "5m": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        },
+        "15m": {
+          "ok": false,
+          "count": 119,
+          "missingIntervals": 6,
+          "maxGapIntervals": 1
+        },
+        "1h": {
+          "ok": false,
+          "count": 119,
+          "missingIntervals": 4,
+          "maxGapIntervals": 2
+        }
+      },
+      "reasons": [
+        "1h uptrend",
+        "15m uptrend",
+        "5m aligned",
+        "1h relative strength vs BTC",
+        "4h relative strength vs BTC",
+        "active volume"
+      ]
+    },
+    {
+      "market": "ELSA-EUR",
+      "action": "WAIT",
+      "setupState": "ARMED",
+      "family": "trend pullback",
+      "contextGrade": "B",
+      "tradeGrade": null,
+      "contextScore": 7.5,
+      "score": 7.5,
+      "trigger": false,
+      "triggerReasons": [
+        "pullback zone reached"
       ],
       "blockers": [
         "entry trigger absent",
         "net structural R/R below threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 0.096322,
+      "entry": 0.095615,
       "stop": 0.09412377142857142,
       "stopMethod": "nearest 5m/15m support - 0.20 ATR15",
-      "target": 0.097771,
+      "target": 0.095939,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 2.282166661228568,
-      "grossRewardPct": 1.504329229044239,
-      "roundTripCostPct": 0.5619364004217832,
-      "netRR": 0.33,
+      "riskPct": 1.5596178125070148,
+      "grossRewardPct": 0.3388589656434565,
+      "roundTripCostPct": 0.6351990745102984,
+      "netRR": null,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
-        "trend pullback": 8,
+        "trend pullback": 7.5,
         "momentum/relative strength": 6.5,
         "confirmed breakout": 4.5,
         "mean reversion": 2.5
       },
       "metrics": {
         "5m": {
-          "last": 0.096097,
-          "lastOpen": 0.095714,
+          "last": 0.095947,
+          "lastOpen": 0.095832,
           "lastBullish": true,
-          "ema20": 0.09512818652368005,
-          "ema50": 0.09581663776600043,
-          "atr": 0.0007602142857142857,
-          "atrPct": 0.7910905498759438,
+          "ema20": 0.09519976606087738,
+          "ema50": 0.09582240058365787,
+          "atr": 0.0007086428571428581,
+          "atrPct": 0.73857739912958,
           "trend": 0,
           "breakout": false,
           "breakdown": false,
-          "volumeRatio": 0.9355114506961911,
-          "high20": 0.096454,
+          "volumeRatio": 0.7428984079136862,
+          "high20": 0.096779,
           "low20": 0.092567,
           "ret1h": null,
           "ret4h": null,
@@ -138,9 +286,9 @@
         "relative1hVsBTC": 2.015776317702392,
         "relative4hVsBTC": 0.6053268634056448,
         "book": {
-          "imbalance": -0.166506141343823,
-          "bidDepth10": 10824.71683561063,
-          "askDepth10": 15149.60012711558,
+          "imbalance": 0.06349286910222143,
+          "bidDepth10": 9387.43803418194,
+          "askDepth10": 8266.536537564121,
           "levels": {
             "bids": 10,
             "asks": 10
@@ -171,303 +319,7 @@
         "1h uptrend",
         "15m uptrend",
         "15m pullback near EMA20",
-        "5m holding/recovering",
-        "5m participation adequate"
-      ]
-    },
-    {
-      "market": "INX-EUR",
-      "action": "WAIT",
-      "setupState": "ARMED",
-      "family": "momentum/relative strength",
-      "contextGrade": "A",
-      "tradeGrade": null,
-      "contextScore": 8,
-      "score": 8,
-      "trigger": false,
-      "triggerReasons": [
-        "multi-timeframe trend aligned",
-        "intraday momentum/relative strength confirmed",
-        "active volume confirmed"
-      ],
-      "blockers": [
-        "data quality gate failed",
-        "entry trigger absent",
-        "net structural R/R below threshold"
-      ],
-      "btcRegime": "neutral",
-      "entry": 0.003846,
-      "stop": 0.0037405714285714286,
-      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
-      "target": 0.003884,
-      "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 2.741252507243147,
-      "grossRewardPct": 0.9880395215808591,
-      "roundTripCostPct": 0.7121730644111923,
-      "netRR": 0.08,
-      "suggestedRiskEur": null,
-      "suggestedAmountEur": null,
-      "candidateScores": {
-        "momentum/relative strength": 8,
-        "trend pullback": 6,
-        "mean reversion": 6,
-        "confirmed breakout": 4.5
-      },
-      "metrics": {
-        "5m": {
-          "last": 0.003823,
-          "lastOpen": 0.003837,
-          "lastBullish": false,
-          "ema20": 0.003736932335841423,
-          "ema50": 0.0036024074206361285,
-          "atr": 0.00005414285714285711,
-          "atrPct": 1.4162400508202226,
-          "trend": 1,
-          "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 1.6348634530901613,
-          "high20": 0.003884,
-          "low20": 0.003553,
-          "ret1h": null,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "15m": {
-          "last": 0.003826,
-          "lastOpen": 0.003779,
-          "lastBullish": true,
-          "ema20": 0.0035624089008541118,
-          "ema50": 0.0033255342358939097,
-          "atr": 0.0000937142857142857,
-          "atrPct": 2.449406317676051,
-          "trend": 1,
-          "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 2.387948528772554,
-          "high20": 0.003884,
-          "low20": 0.003116,
-          "ret1h": 1.324152542372885,
-          "ret4h": null,
-          "quality": {
-            "ok": false,
-            "count": 119,
-            "missingIntervals": 6,
-            "maxGapIntervals": 1
-          }
-        },
-        "1h": {
-          "last": 0.003759,
-          "lastOpen": 0.003626,
-          "lastBullish": true,
-          "ema20": 0.0031880815299071327,
-          "ema50": 0.0030024006000302166,
-          "atr": 0.0001704285714285715,
-          "atrPct": 4.533880591342684,
-          "trend": 1,
-          "breakout": true,
-          "breakdown": false,
-          "volumeRatio": 1.6438507895829362,
-          "high20": 0.003653,
-          "low20": 0.002829,
-          "ret1h": null,
-          "ret4h": 15.412956708627581,
-          "quality": {
-            "ok": false,
-            "count": 119,
-            "missingIntervals": 4,
-            "maxGapIntervals": 2
-          }
-        },
-        "relative1hVsBTC": 1.6250374981250975,
-        "relative4hVsBTC": 17.514322857339646,
-        "book": {
-          "imbalance": -0.24889326994071517,
-          "bidDepth10": 6071.7525860466,
-          "askDepth10": 10095.7302577494,
-          "levels": {
-            "bids": 10,
-            "asks": 10
-          }
-        }
-      },
-      "dataQuality": {
-        "5m": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        },
-        "15m": {
-          "ok": false,
-          "count": 119,
-          "missingIntervals": 6,
-          "maxGapIntervals": 1
-        },
-        "1h": {
-          "ok": false,
-          "count": 119,
-          "missingIntervals": 4,
-          "maxGapIntervals": 2
-        }
-      },
-      "reasons": [
-        "1h uptrend",
-        "15m uptrend",
-        "5m aligned",
-        "1h relative strength vs BTC",
-        "4h relative strength vs BTC",
-        "active volume"
-      ]
-    },
-    {
-      "market": "CROSS-EUR",
-      "action": "WAIT",
-      "setupState": "WATCH",
-      "family": "mean reversion",
-      "contextGrade": null,
-      "tradeGrade": null,
-      "contextScore": 6.5,
-      "score": 6.5,
-      "trigger": false,
-      "triggerReasons": [
-        "prior weakness confirmed",
-        "downside excess confirmed",
-        "reversal volume confirmed"
-      ],
-      "blockers": [
-        "data quality gate failed",
-        "context score below B threshold"
-      ],
-      "btcRegime": "neutral",
-      "entry": 0.116205,
-      "stop": 0.11578731428571427,
-      "stopMethod": "reversal low - 0.20 ATR5",
-      "target": 0.12138576736718483,
-      "targetMethod": "15m EMA20 mean-reversion target",
-      "riskPct": 0.35943867672279917,
-      "grossRewardPct": 4.458299872797923,
-      "roundTripCostPct": 0.804892175913758,
-      "netRR": 3.14,
-      "suggestedRiskEur": null,
-      "suggestedAmountEur": null,
-      "candidateScores": {
-        "mean reversion": 6.5,
-        "momentum/relative strength": 1.5,
-        "trend pullback": 0.5,
-        "confirmed breakout": 0
-      },
-      "metrics": {
-        "5m": {
-          "last": 0.116273,
-          "lastOpen": 0.116075,
-          "lastBullish": true,
-          "ema20": 0.11818079576249763,
-          "ema50": 0.12105693726745684,
-          "atr": 0.0006584285714285708,
-          "atrPct": 0.5662781311470168,
-          "trend": -1,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 1.2308793233924131,
-          "high20": 0.121576,
-          "low20": 0.116315,
-          "ret1h": null,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 120,
-            "missingIntervals": 3,
-            "maxGapIntervals": 1
-          }
-        },
-        "15m": {
-          "last": 0.1168,
-          "lastOpen": 0.116998,
-          "lastBullish": false,
-          "ema20": 0.12138576736718483,
-          "ema50": 0.12669817768553335,
-          "atr": 0.0017424285714285723,
-          "atrPct": 1.4918052837573392,
-          "trend": -1,
-          "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 0.013908858705031687,
-          "high20": 0.131738,
-          "low20": 0.116315,
-          "ret1h": -2.4039706877679126,
-          "ret4h": null,
-          "quality": {
-            "ok": false,
-            "count": 119,
-            "missingIntervals": 5,
-            "maxGapIntervals": 3
-          }
-        },
-        "1h": {
-          "last": 0.116546,
-          "lastOpen": 0.119347,
-          "lastBullish": false,
-          "ema20": 0.12973236599676416,
-          "ema50": 0.13479486280032055,
-          "atr": 0.0029242857142857135,
-          "atrPct": 2.5091257651791685,
-          "trend": -1,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 0.935170274981458,
-          "high20": 0.141613,
-          "low20": 0.117484,
-          "ret1h": null,
-          "ret4h": -8.02945052516947,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 1,
-            "maxGapIntervals": 1
-          }
-        },
-        "relative1hVsBTC": -2.1030857320157,
-        "relative4hVsBTC": -5.928084376457404,
-        "book": {
-          "imbalance": -0.12829593615265247,
-          "bidDepth10": 8574.38359724691,
-          "askDepth10": 11098.310274118252,
-          "levels": {
-            "bids": 10,
-            "asks": 10
-          }
-        }
-      },
-      "dataQuality": {
-        "5m": {
-          "ok": true,
-          "count": 120,
-          "missingIntervals": 3,
-          "maxGapIntervals": 1
-        },
-        "15m": {
-          "ok": false,
-          "count": 119,
-          "missingIntervals": 5,
-          "maxGapIntervals": 3
-        },
-        "1h": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 1,
-          "maxGapIntervals": 1
-        }
-      },
-      "reasons": [
-        "not extended in 1h uptrend",
-        "15m prior weakness",
-        "downside excess vs 15m ATR",
-        "reversal volume"
+        "5m holding/recovering"
       ]
     },
     {
@@ -477,8 +329,8 @@
       "family": "trend pullback",
       "contextGrade": null,
       "tradeGrade": null,
-      "contextScore": 5.5,
-      "score": 5.5,
+      "contextScore": 6,
+      "score": 6,
       "trigger": false,
       "triggerReasons": [
         "pullback zone reached"
@@ -489,44 +341,44 @@
         "net structural R/R below threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 0.07925,
-      "stop": 0.07819807142857142,
+      "entry": 0.079434,
+      "stop": 0.07896207142857142,
       "stopMethod": "nearest 5m/15m support - 0.20 ATR15",
       "target": 0.080117,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 1.3273546642631908,
-      "grossRewardPct": 1.094006309148256,
-      "roundTripCostPct": 0.5625799425487015,
-      "netRR": 0.28,
+      "riskPct": 0.5941140713404606,
+      "grossRewardPct": 0.859833320744252,
+      "roundTripCostPct": 0.5156423173803509,
+      "netRR": 0.31,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
-        "trend pullback": 5.5,
-        "momentum/relative strength": 2,
-        "confirmed breakout": 1.5,
-        "mean reversion": 0
+        "trend pullback": 6,
+        "momentum/relative strength": 2.5,
+        "confirmed breakout": 2,
+        "mean reversion": 0.5
       },
       "metrics": {
         "5m": {
-          "last": 0.079085,
-          "lastOpen": 0.078681,
-          "lastBullish": true,
-          "ema20": 0.08005080859219053,
-          "ema50": 0.07982761261317915,
-          "atr": 0.0006081428571428597,
-          "atrPct": 0.7689737082162985,
+          "last": 0.078954,
+          "lastOpen": 0.079412,
+          "lastBullish": false,
+          "ema20": 0.07995131050274386,
+          "ema50": 0.07979601215204644,
+          "atr": 0.0006227142857142889,
+          "atrPct": 0.7887051773365364,
           "trend": 0,
           "breakout": false,
           "breakdown": false,
-          "volumeRatio": 0.3805501860059893,
-          "high20": 0.083568,
+          "volumeRatio": 0.5350130494131181,
+          "high20": 0.083072,
           "low20": 0.078593,
           "ret1h": null,
           "ret4h": null,
           "quality": {
-            "ok": false,
-            "count": 120,
-            "missingIntervals": 4,
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 3,
             "maxGapIntervals": 1
           }
         },
@@ -579,9 +431,9 @@
         "relative1hVsBTC": -1.3422957816142038,
         "relative4hVsBTC": 0.6698758695589213,
         "book": {
-          "imbalance": -0.08695648500794335,
-          "bidDepth10": 7090.676321559727,
-          "askDepth10": 8441.28071034891,
+          "imbalance": 0.3555914930429829,
+          "bidDepth10": 13909.703160942667,
+          "askDepth10": 6612.265636189081,
           "levels": {
             "bids": 10,
             "asks": 10
@@ -590,9 +442,9 @@
       },
       "dataQuality": {
         "5m": {
-          "ok": false,
-          "count": 120,
-          "missingIntervals": 4,
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 3,
           "maxGapIntervals": 1
         },
         "15m": {
@@ -611,151 +463,7 @@
       "reasons": [
         "1h uptrend",
         "15m pullback near EMA20",
-        "5m holding/recovering"
-      ]
-    },
-    {
-      "market": "QNT-EUR",
-      "action": "WAIT",
-      "setupState": "WATCH",
-      "family": "momentum/relative strength",
-      "contextGrade": null,
-      "tradeGrade": null,
-      "contextScore": 4.5,
-      "score": 4.5,
-      "trigger": false,
-      "triggerReasons": [
-        "intraday momentum/relative strength confirmed",
-        "active volume confirmed",
-        "not overextended vs 15m ATR"
-      ],
-      "blockers": [
-        "context score below B threshold"
-      ],
-      "btcRegime": "neutral",
-      "entry": 146.223,
-      "stop": 145.6125357142857,
-      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
-      "target": 150.211,
-      "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 0.41748855222112835,
-      "grossRewardPct": 2.727341115966708,
-      "roundTripCostPct": 0.5785677640017282,
-      "netRR": 2.16,
-      "suggestedRiskEur": null,
-      "suggestedAmountEur": null,
-      "candidateScores": {
-        "momentum/relative strength": 4.5,
-        "mean reversion": 4,
-        "trend pullback": 3.5,
-        "confirmed breakout": 3.5
-      },
-      "metrics": {
-        "5m": {
-          "last": 145.79,
-          "lastOpen": 146.179,
-          "lastBullish": false,
-          "ema20": 147.80248922054727,
-          "ema50": 147.95203630002274,
-          "atr": 0.7313571428571451,
-          "atrPct": 0.5016511028583203,
-          "trend": -1,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 4.0663057212501785,
-          "high20": 149.439,
-          "low20": 146.071,
-          "ret1h": null,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "15m": {
-          "last": 146.383,
-          "lastOpen": 147.641,
-          "lastBullish": false,
-          "ema20": 147.81136753942312,
-          "ema50": 144.0857761761958,
-          "atr": 1.8338571428571433,
-          "atrPct": 1.2527801335244824,
-          "trend": 0,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 0.22780558099228218,
-          "high20": 157.86,
-          "low20": 147,
-          "ret1h": -1.5436042992238175,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "1h": {
-          "last": 148.387,
-          "lastOpen": 148.321,
-          "lastBullish": true,
-          "ema20": 140.61576349365498,
-          "ema50": 134.96527113944683,
-          "atr": 4.294428571428568,
-          "atrPct": 2.894073316010546,
-          "trend": 1,
-          "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 0.6719904862433171,
-          "high20": 157.86,
-          "low20": 127.29,
-          "ret1h": null,
-          "ret4h": -0.9207697341185521,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "relative1hVsBTC": -1.242719343471605,
-        "relative4hVsBTC": 1.1805964145935137,
-        "book": {
-          "imbalance": 0.21533352910345283,
-          "bidDepth10": 16107.85662794093,
-          "askDepth10": 10399.85708555077,
-          "levels": {
-            "bids": 10,
-            "asks": 10
-          }
-        }
-      },
-      "dataQuality": {
-        "5m": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        },
-        "15m": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        },
-        "1h": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        }
-      },
-      "reasons": [
-        "1h uptrend",
-        "4h relative strength vs BTC",
-        "active volume",
+        "5m holding/recovering",
         "tight spread"
       ]
     },
@@ -766,48 +474,49 @@
       "family": "mean reversion",
       "contextGrade": null,
       "tradeGrade": null,
-      "contextScore": 4,
-      "score": 4,
+      "contextScore": 5.5,
+      "score": 5.5,
       "trigger": false,
       "triggerReasons": [
-        "downside excess confirmed"
+        "downside excess confirmed",
+        "reversal volume confirmed"
       ],
       "blockers": [
         "context score below B threshold",
         "net structural R/R below threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 56344,
-      "stop": 56229.2,
+      "entry": 55987,
+      "stop": 55832.68571428571,
       "stopMethod": "reversal low - 0.20 ATR5",
-      "target": 56350,
+      "target": 56103,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 0.20374840266932223,
-      "grossRewardPct": 0.010648871219650717,
-      "roundTripCostPct": 0.5317748276198675,
+      "riskPct": 0.27562520891329845,
+      "grossRewardPct": 0.207190955043135,
+      "roundTripCostPct": 0.5317861448742107,
       "netRR": null,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
-        "mean reversion": 4,
-        "trend pullback": 0.5,
-        "confirmed breakout": 0.5,
-        "momentum/relative strength": 0.5
+        "mean reversion": 5.5,
+        "confirmed breakout": 2,
+        "momentum/relative strength": 2,
+        "trend pullback": 1
       },
       "metrics": {
         "5m": {
-          "last": 56290,
-          "lastOpen": 56324,
+          "last": 55924,
+          "lastOpen": 56290,
           "lastBullish": false,
-          "ema20": 56495.28055392904,
-          "ema50": 56703.349209188804,
-          "atr": 144,
-          "atrPct": 0.25581808491739205,
+          "ema20": 56440.48566190791,
+          "ema50": 56672.692333194325,
+          "atr": 166.57142857142858,
+          "atrPct": 0.29785320894683603,
           "trend": -1,
           "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 0.16775135013593961,
-          "high20": 56794,
+          "breakdown": true,
+          "volumeRatio": 3.582463284438113,
+          "high20": 56787,
           "low20": 56258,
           "ret1h": null,
           "ret4h": null,
@@ -867,9 +576,9 @@
         "relative1hVsBTC": 0,
         "relative4hVsBTC": 0,
         "book": {
-          "imbalance": -0.19841538906502665,
-          "bidDepth10": 159808.88547165002,
-          "askDepth10": 238923.5335184,
+          "imbalance": -0.001011722166071475,
+          "bidDepth10": 144099.92239611,
+          "askDepth10": 144391.79586219997,
           "levels": {
             "bids": 10,
             "asks": 10
@@ -899,7 +608,152 @@
       "reasons": [
         "not extended in 1h uptrend",
         "downside excess vs 15m ATR",
+        "reversal volume",
         "tight spread"
+      ]
+    },
+    {
+      "market": "CROSS-EUR",
+      "action": "WAIT",
+      "setupState": "WATCH",
+      "family": "mean reversion",
+      "contextGrade": null,
+      "tradeGrade": null,
+      "contextScore": 5,
+      "score": 5,
+      "trigger": false,
+      "triggerReasons": [
+        "prior weakness confirmed",
+        "downside excess confirmed"
+      ],
+      "blockers": [
+        "data quality gate failed",
+        "context score below B threshold"
+      ],
+      "btcRegime": "neutral",
+      "entry": 0.115797,
+      "stop": 0.11566255714285714,
+      "stopMethod": "reversal low - 0.20 ATR5",
+      "target": 0.12138576736718483,
+      "targetMethod": "15m EMA20 mean-reversion target",
+      "riskPct": 0.11610219361715347,
+      "grossRewardPct": 4.826349013519204,
+      "roundTripCostPct": 0.7842153047989646,
+      "netRR": 4.49,
+      "suggestedRiskEur": null,
+      "suggestedAmountEur": null,
+      "candidateScores": {
+        "mean reversion": 5,
+        "trend pullback": 0,
+        "confirmed breakout": 0,
+        "momentum/relative strength": 0
+      },
+      "metrics": {
+        "5m": {
+          "last": 0.115793,
+          "lastOpen": 0.115793,
+          "lastBullish": false,
+          "ema20": 0.11795365547667888,
+          "ema50": 0.12084804923535827,
+          "atr": 0.0006522142857142857,
+          "atrPct": 0.5632588202346305,
+          "trend": -1,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 0.05050764682991754,
+          "high20": 0.121521,
+          "low20": 0.115919,
+          "ret1h": null,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 120,
+            "missingIntervals": 3,
+            "maxGapIntervals": 1
+          }
+        },
+        "15m": {
+          "last": 0.1168,
+          "lastOpen": 0.116998,
+          "lastBullish": false,
+          "ema20": 0.12138576736718483,
+          "ema50": 0.12669817768553335,
+          "atr": 0.0017424285714285723,
+          "atrPct": 1.4918052837573392,
+          "trend": -1,
+          "breakout": false,
+          "breakdown": false,
+          "volumeRatio": 0.013908858705031687,
+          "high20": 0.131738,
+          "low20": 0.116315,
+          "ret1h": -2.4039706877679126,
+          "ret4h": null,
+          "quality": {
+            "ok": false,
+            "count": 119,
+            "missingIntervals": 5,
+            "maxGapIntervals": 3
+          }
+        },
+        "1h": {
+          "last": 0.116546,
+          "lastOpen": 0.119347,
+          "lastBullish": false,
+          "ema20": 0.12973236599676416,
+          "ema50": 0.13479486280032055,
+          "atr": 0.0029242857142857135,
+          "atrPct": 2.5091257651791685,
+          "trend": -1,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 0.935170274981458,
+          "high20": 0.141613,
+          "low20": 0.117484,
+          "ret1h": null,
+          "ret4h": -8.02945052516947,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 1,
+            "maxGapIntervals": 1
+          }
+        },
+        "relative1hVsBTC": -2.1030857320157,
+        "relative4hVsBTC": -5.928084376457404,
+        "book": {
+          "imbalance": 0.08628977361414945,
+          "bidDepth10": 9139.039597341362,
+          "askDepth10": 7687.1145639654205,
+          "levels": {
+            "bids": 10,
+            "asks": 10
+          }
+        }
+      },
+      "dataQuality": {
+        "5m": {
+          "ok": true,
+          "count": 120,
+          "missingIntervals": 3,
+          "maxGapIntervals": 1
+        },
+        "15m": {
+          "ok": false,
+          "count": 119,
+          "missingIntervals": 5,
+          "maxGapIntervals": 3
+        },
+        "1h": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 1,
+          "maxGapIntervals": 1
+        }
+      },
+      "reasons": [
+        "not extended in 1h uptrend",
+        "15m prior weakness",
+        "downside excess vs 15m ATR"
       ]
     },
     {
@@ -921,38 +775,38 @@
         "net structural R/R below threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 1593.83,
-      "stop": 1589.2324999999998,
+      "entry": 1581.78,
+      "stop": 1569.6225,
       "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
-      "target": 1600,
+      "target": 1592.87,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 0.2884561088698344,
-      "grossRewardPct": 0.3871178231053546,
-      "roundTripCostPct": 0.5306274214546761,
-      "netRR": null,
+      "riskPct": 0.7685961385274834,
+      "grossRewardPct": 0.7011088773407123,
+      "roundTripCostPct": 0.5394834371769618,
+      "netRR": 0.12,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
         "momentum/relative strength": 4,
         "mean reversion": 4,
         "trend pullback": 3.5,
-        "confirmed breakout": 2
+        "confirmed breakout": 3.5
       },
       "metrics": {
         "5m": {
-          "last": 1590.67,
-          "lastOpen": 1592.97,
+          "last": 1580.43,
+          "lastOpen": 1590.68,
           "lastBullish": false,
-          "ema20": 1599.716223110036,
-          "ema50": 1605.5227954313314,
-          "atr": 3.87357142857143,
-          "atrPct": 0.24351822996419306,
+          "ema20": 1597.8473524723618,
+          "ema50": 1604.528235224527,
+          "atr": 4.831428571428562,
+          "atrPct": 0.3057034206784585,
           "trend": -1,
           "breakout": false,
           "breakdown": true,
-          "volumeRatio": 1.2477429455355502,
+          "volumeRatio": 4.403230212836104,
           "high20": 1605.51,
-          "low20": 1592.08,
+          "low20": 1590.66,
           "ret1h": null,
           "ret4h": null,
           "quality": {
@@ -1011,152 +865,9 @@
         "relative1hVsBTC": -0.26642807746898467,
         "relative4hVsBTC": 0.2036860135146401,
         "book": {
-          "imbalance": 0.0541017547285589,
-          "bidDepth10": 104676.78035049069,
-          "askDepth10": 93931.71238927511,
-          "levels": {
-            "bids": 10,
-            "asks": 10
-          }
-        }
-      },
-      "dataQuality": {
-        "5m": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        },
-        "15m": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        },
-        "1h": {
-          "ok": true,
-          "count": 119,
-          "missingIntervals": 0,
-          "maxGapIntervals": 0
-        }
-      },
-      "reasons": [
-        "1h uptrend",
-        "active volume",
-        "tight spread"
-      ]
-    },
-    {
-      "market": "HYPE-EUR",
-      "action": "WAIT",
-      "setupState": "WATCH",
-      "family": "momentum/relative strength",
-      "contextGrade": null,
-      "tradeGrade": null,
-      "contextScore": 4,
-      "score": 4,
-      "trigger": false,
-      "triggerReasons": [
-        "active volume confirmed",
-        "not overextended vs 15m ATR"
-      ],
-      "blockers": [
-        "context score below B threshold"
-      ],
-      "btcRegime": "neutral",
-      "entry": 59.41,
-      "stop": 59.186,
-      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
-      "target": 60.727,
-      "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 0.37704090220501035,
-      "grossRewardPct": 2.2167985187678845,
-      "roundTripCostPct": 0.5518842324105451,
-      "netRR": 1.79,
-      "suggestedRiskEur": null,
-      "suggestedAmountEur": null,
-      "candidateScores": {
-        "momentum/relative strength": 4,
-        "mean reversion": 4,
-        "trend pullback": 3.5,
-        "confirmed breakout": 3.5
-      },
-      "metrics": {
-        "5m": {
-          "last": 59.308,
-          "lastOpen": 59.314,
-          "lastBullish": false,
-          "ema20": 59.87850695305484,
-          "ema50": 60.15627578621703,
-          "atr": 0.20378571428571338,
-          "atrPct": 0.3436057771054721,
-          "trend": -1,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 3.679131160326187,
-          "high20": 60.615,
-          "low20": 59.33,
-          "ret1h": null,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "15m": {
-          "last": 59.33,
-          "lastOpen": 59.79,
-          "lastBullish": false,
-          "ema20": 60.12921464311192,
-          "ema50": 59.50852369593332,
-          "atr": 0.575999999999999,
-          "atrPct": 0.9708410584864301,
-          "trend": 0,
-          "breakout": false,
-          "breakdown": true,
-          "volumeRatio": 0.3260440558091442,
-          "high20": 63.751,
-          "low20": 59.586,
-          "ret1h": -1.0573010472950444,
-          "ret4h": null,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "1h": {
-          "last": 59.993,
-          "lastOpen": 60.216,
-          "lastBullish": false,
-          "ema20": 58.91878739190215,
-          "ema50": 57.77534945525474,
-          "atr": 1.1099999999999999,
-          "atrPct": 1.8502158585168267,
-          "trend": 1,
-          "breakout": false,
-          "breakdown": false,
-          "volumeRatio": 1.1338705102341373,
-          "high20": 63.751,
-          "low20": 55.854,
-          "ret1h": null,
-          "ret4h": -2.5882085505057906,
-          "quality": {
-            "ok": true,
-            "count": 119,
-            "missingIntervals": 0,
-            "maxGapIntervals": 0
-          }
-        },
-        "relative1hVsBTC": -0.756416091542832,
-        "relative4hVsBTC": -0.48684240179372473,
-        "book": {
-          "imbalance": -0.2840655734693337,
-          "bidDepth10": 34377.31841715588,
-          "askDepth10": 61657.50584389916,
+          "imbalance": 0.020172953144687956,
+          "bidDepth10": 83027.075288543,
+          "askDepth10": 79743.511860649,
           "levels": {
             "bids": 10,
             "asks": 10
@@ -1193,51 +904,52 @@
       "market": "XRP-EUR",
       "action": "WAIT",
       "setupState": "WATCH",
-      "family": "trend pullback",
+      "family": "momentum/relative strength",
       "contextGrade": null,
       "tradeGrade": null,
-      "contextScore": 3.5,
-      "score": 3.5,
+      "contextScore": 4,
+      "score": 4,
       "trigger": false,
       "triggerReasons": [
-        "closed 5m participation confirmed"
+        "active volume confirmed",
+        "not overextended vs 15m ATR"
       ],
       "blockers": [
         "context score below B threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 0.86849,
-      "stop": 0.8575215714285714,
-      "stopMethod": "nearest 5m/15m support - 0.20 ATR15",
+      "entry": 0.8643,
+      "stop": 0.8571794642857143,
+      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
       "target": 0.92467,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 1.2629308997718507,
-      "grossRewardPct": 6.468698545751822,
-      "roundTripCostPct": 0.4311514303643649,
-      "netRR": 3.56,
+      "riskPct": 0.8238500190079387,
+      "grossRewardPct": 6.984843225731811,
+      "roundTripCostPct": 0.5427278723047219,
+      "netRR": 4.71,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
+        "momentum/relative strength": 4,
+        "mean reversion": 4,
         "trend pullback": 3.5,
-        "momentum/relative strength": 2.5,
-        "mean reversion": 2.5,
-        "confirmed breakout": 2
+        "confirmed breakout": 3.5
       },
       "metrics": {
         "5m": {
-          "last": 0.86742,
-          "lastOpen": 0.869,
+          "last": 0.86371,
+          "lastOpen": 0.8674,
           "lastBullish": false,
-          "ema20": 0.8747189772860656,
-          "ema50": 0.8813579020199686,
-          "atr": 0.0029257142857142854,
-          "atrPct": 0.3372892354008768,
+          "ema20": 0.8736564696088687,
+          "ema50": 0.8806515319411865,
+          "atr": 0.003146428571428574,
+          "atrPct": 0.3642922475632532,
           "trend": -1,
           "breakout": false,
           "breakdown": true,
-          "volumeRatio": 0.8012718349034045,
-          "high20": 0.88296,
-          "low20": 0.86907,
+          "volumeRatio": 1.571109900553771,
+          "high20": 0.88291,
+          "low20": 0.86739,
           "ret1h": null,
           "ret4h": null,
           "quality": {
@@ -1296,9 +1008,9 @@
         "relative1hVsBTC": -0.18234512818325022,
         "relative4hVsBTC": -1.7739191229989042,
         "book": {
-          "imbalance": 0.4022179886066712,
-          "bidDepth10": 114184.40340270833,
-          "askDepth10": 48678.15339014651,
+          "imbalance": -0.3602906056160696,
+          "bidDepth10": 91667.87951562609,
+          "askDepth10": 194924.37728218592,
           "levels": {
             "bids": 10,
             "asks": 10
@@ -1327,7 +1039,7 @@
       },
       "reasons": [
         "1h uptrend",
-        "5m participation adequate",
+        "active volume",
         "tight spread"
       ]
     },
@@ -1335,51 +1047,53 @@
       "market": "SOL-EUR",
       "action": "WAIT",
       "setupState": "WATCH",
-      "family": "trend pullback",
+      "family": "momentum/relative strength",
       "contextGrade": null,
       "tradeGrade": null,
-      "contextScore": 3.5,
-      "score": 3.5,
+      "contextScore": 4,
+      "score": 4,
       "trigger": false,
       "triggerReasons": [
-        "closed 5m participation confirmed"
+        "active volume confirmed",
+        "not overextended vs 15m ATR"
       ],
       "blockers": [
-        "context score below B threshold"
+        "context score below B threshold",
+        "net structural R/R below threshold"
       ],
       "btcRegime": "neutral",
-      "entry": 67.016,
-      "stop": 66.84137142857143,
-      "stopMethod": "nearest 5m/15m support - 0.20 ATR15",
+      "entry": 66.591,
+      "stop": 65.91371428571429,
+      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
       "target": 68.53,
       "targetMethod": "nearest 15m/1h structural resistance",
-      "riskPct": 0.2605774314023076,
-      "grossRewardPct": 2.259161991166282,
-      "roundTripCostPct": 0.4314921921048187,
-      "netRR": 2.64,
+      "riskPct": 1.0170829605888214,
+      "grossRewardPct": 2.9118048985598763,
+      "roundTripCostPct": 0.5630429558425825,
+      "netRR": 1.49,
       "suggestedRiskEur": null,
       "suggestedAmountEur": null,
       "candidateScores": {
+        "momentum/relative strength": 4,
+        "mean reversion": 4,
         "trend pullback": 3.5,
-        "momentum/relative strength": 2.5,
-        "mean reversion": 2.5,
-        "confirmed breakout": 2
+        "confirmed breakout": 3.5
       },
       "metrics": {
         "5m": {
-          "last": 66.931,
-          "lastOpen": 66.969,
+          "last": 66.53,
+          "lastOpen": 66.921,
           "lastBullish": false,
-          "ema20": 67.40947542718988,
-          "ema50": 67.7736762726821,
-          "atr": 0.2047142857142867,
-          "atrPct": 0.3058586988305669,
+          "ema20": 67.32435935874588,
+          "ema50": 67.72469064980775,
+          "atr": 0.23228571428571598,
+          "atrPct": 0.3491443172789959,
           "trend": -1,
           "breakout": false,
           "breakdown": true,
-          "volumeRatio": 1.1368281469472648,
+          "volumeRatio": 1.731564757749245,
           "high20": 67.832,
-          "low20": 66.956,
+          "low20": 66.899,
           "ret1h": null,
           "ret4h": null,
           "quality": {
@@ -1438,9 +1152,296 @@
         "relative1hVsBTC": -0.511846354388413,
         "relative4hVsBTC": -1.8424650015481805,
         "book": {
-          "imbalance": -0.2750644098226368,
-          "bidDepth10": 54879.758021849906,
-          "askDepth10": 96526.12897129107,
+          "imbalance": -0.015214356969311118,
+          "bidDepth10": 89387.54531167157,
+          "askDepth10": 92149.5149496466,
+          "levels": {
+            "bids": 10,
+            "asks": 10
+          }
+        }
+      },
+      "dataQuality": {
+        "5m": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        },
+        "15m": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        },
+        "1h": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        }
+      },
+      "reasons": [
+        "1h uptrend",
+        "active volume",
+        "tight spread"
+      ]
+    },
+    {
+      "market": "HYPE-EUR",
+      "action": "WAIT",
+      "setupState": "WATCH",
+      "family": "momentum/relative strength",
+      "contextGrade": null,
+      "tradeGrade": null,
+      "contextScore": 4,
+      "score": 4,
+      "trigger": false,
+      "triggerReasons": [
+        "active volume confirmed",
+        "not overextended vs 15m ATR"
+      ],
+      "blockers": [
+        "context score below B threshold",
+        "net structural R/R below threshold"
+      ],
+      "btcRegime": "neutral",
+      "entry": 58.917,
+      "stop": 58.229,
+      "stopMethod": "nearest 5m/15m pivot support - 0.25 ATR15",
+      "target": 60.727,
+      "targetMethod": "nearest 15m/1h structural resistance",
+      "riskPct": 1.1677444540624988,
+      "grossRewardPct": 3.072118403856264,
+      "roundTripCostPct": 0.5486720759104806,
+      "netRR": 1.47,
+      "suggestedRiskEur": null,
+      "suggestedAmountEur": null,
+      "candidateScores": {
+        "momentum/relative strength": 4,
+        "mean reversion": 4,
+        "trend pullback": 3.5,
+        "confirmed breakout": 3.5
+      },
+      "metrics": {
+        "5m": {
+          "last": 59.017,
+          "lastOpen": 59.321,
+          "lastBullish": false,
+          "ema20": 59.79540306510155,
+          "ema50": 60.1114527814549,
+          "atr": 0.22185714285714195,
+          "atrPct": 0.3759207395447785,
+          "trend": -1,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 3.0802186546614947,
+          "high20": 60.545,
+          "low20": 59.26,
+          "ret1h": null,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "15m": {
+          "last": 59.33,
+          "lastOpen": 59.79,
+          "lastBullish": false,
+          "ema20": 60.12921464311192,
+          "ema50": 59.50852369593332,
+          "atr": 0.575999999999999,
+          "atrPct": 0.9708410584864301,
+          "trend": 0,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 0.3260440558091442,
+          "high20": 63.751,
+          "low20": 59.586,
+          "ret1h": -1.0573010472950444,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "1h": {
+          "last": 59.993,
+          "lastOpen": 60.216,
+          "lastBullish": false,
+          "ema20": 58.91878739190215,
+          "ema50": 57.77534945525474,
+          "atr": 1.1099999999999999,
+          "atrPct": 1.8502158585168267,
+          "trend": 1,
+          "breakout": false,
+          "breakdown": false,
+          "volumeRatio": 1.1338705102341373,
+          "high20": 63.751,
+          "low20": 55.854,
+          "ret1h": null,
+          "ret4h": -2.5882085505057906,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "relative1hVsBTC": -0.756416091542832,
+        "relative4hVsBTC": -0.48684240179372473,
+        "book": {
+          "imbalance": -0.1440652466856926,
+          "bidDepth10": 33744.626487376,
+          "askDepth10": 45103.96882134761,
+          "levels": {
+            "bids": 10,
+            "asks": 10
+          }
+        }
+      },
+      "dataQuality": {
+        "5m": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        },
+        "15m": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        },
+        "1h": {
+          "ok": true,
+          "count": 119,
+          "missingIntervals": 0,
+          "maxGapIntervals": 0
+        }
+      },
+      "reasons": [
+        "1h uptrend",
+        "active volume",
+        "tight spread"
+      ]
+    },
+    {
+      "market": "QNT-EUR",
+      "action": "WAIT",
+      "setupState": "WATCH",
+      "family": "trend pullback",
+      "contextGrade": null,
+      "tradeGrade": null,
+      "contextScore": 3.5,
+      "score": 3.5,
+      "trigger": false,
+      "triggerReasons": [
+        "closed 5m participation confirmed"
+      ],
+      "blockers": [
+        "context score below B threshold",
+        "net structural R/R below threshold"
+      ],
+      "btcRegime": "neutral",
+      "entry": 145.58,
+      "stop": 142.14422857142856,
+      "stopMethod": "nearest 5m/15m support - 0.20 ATR15",
+      "target": 150.211,
+      "targetMethod": "nearest 15m/1h structural resistance",
+      "riskPct": 2.360057307714972,
+      "grossRewardPct": 3.1810688281357327,
+      "roundTripCostPct": 0.5000891231301005,
+      "netRR": 0.94,
+      "suggestedRiskEur": null,
+      "suggestedAmountEur": null,
+      "candidateScores": {
+        "trend pullback": 3.5,
+        "momentum/relative strength": 3,
+        "mean reversion": 2.5,
+        "confirmed breakout": 2
+      },
+      "metrics": {
+        "5m": {
+          "last": 145.192,
+          "lastOpen": 146.125,
+          "lastBullish": false,
+          "ema20": 147.5498337505143,
+          "ema50": 147.83943389388403,
+          "atr": 0.7566428571428584,
+          "atrPct": 0.5211326086443181,
+          "trend": -1,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 1.1561606085512541,
+          "high20": 149.439,
+          "low20": 145.738,
+          "ret1h": null,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "15m": {
+          "last": 146.383,
+          "lastOpen": 147.641,
+          "lastBullish": false,
+          "ema20": 147.81136753942312,
+          "ema50": 144.0857761761958,
+          "atr": 1.8338571428571433,
+          "atrPct": 1.2527801335244824,
+          "trend": 0,
+          "breakout": false,
+          "breakdown": true,
+          "volumeRatio": 0.22780558099228218,
+          "high20": 157.86,
+          "low20": 147,
+          "ret1h": -1.5436042992238175,
+          "ret4h": null,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "1h": {
+          "last": 148.387,
+          "lastOpen": 148.321,
+          "lastBullish": true,
+          "ema20": 140.61576349365498,
+          "ema50": 134.96527113944683,
+          "atr": 4.294428571428568,
+          "atrPct": 2.894073316010546,
+          "trend": 1,
+          "breakout": false,
+          "breakdown": false,
+          "volumeRatio": 0.6719904862433171,
+          "high20": 157.86,
+          "low20": 127.29,
+          "ret1h": null,
+          "ret4h": -0.9207697341185521,
+          "quality": {
+            "ok": true,
+            "count": 119,
+            "missingIntervals": 0,
+            "maxGapIntervals": 0
+          }
+        },
+        "relative1hVsBTC": -1.242719343471605,
+        "relative4hVsBTC": 1.1805964145935137,
+        "book": {
+          "imbalance": -0.036898347449592354,
+          "bidDepth10": 12494.58277885076,
+          "askDepth10": 13451.967610225242,
           "levels": {
             "bids": 10,
             "asks": 10
