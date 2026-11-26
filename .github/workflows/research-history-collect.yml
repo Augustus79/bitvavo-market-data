@@ -1,0 +1,30 @@
+name: Historical candle collection
+on:
+  push:
+    branches: ['research/historical-backtest-v1']
+    paths: ['.github/workflows/research-history-collect.yml','research/collect-history.mjs']
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: [0,1,2,3,4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node research/collect-history.mjs
+        env:
+          SHARD: ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-candles-${{ matrix.shard }}
+          path: research-data/
+          retention-days: 30
