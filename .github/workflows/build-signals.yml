@@ -77,9 +77,10 @@ jobs:
             npm run signals
             npm run paper
             npm run adaptive-shadow
+            node generate-pullback-shadow.mjs
             npm run evaluation
 
-            if [ -z "$(git status --porcelain -- signals.json history paper ai evaluation exit-shadow portfolio-shadow adaptive-shadow)" ]; then
+            if [ -z "$(git status --porcelain -- signals.json history paper ai evaluation exit-shadow portfolio-shadow adaptive-shadow pullback-shadow)" ]; then
               echo "signals.json, history, paper, AI shadow, portfolio shadow, exit shadow and evaluation state already current"
               if [ -n "${{ secrets.ALERT_TRIGGER_KEY }}" ]; then
                 curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 30 \
@@ -90,7 +91,7 @@ jobs:
               exit 0
             fi
 
-            git add signals.json history paper ai evaluation exit-shadow portfolio-shadow adaptive-shadow
+            git add signals.json history paper ai evaluation exit-shadow portfolio-shadow adaptive-shadow pullback-shadow
             git commit -m "Update signals, journal and paper trading state"
 
             if git push origin HEAD:main; then
