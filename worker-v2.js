@@ -1195,7 +1195,27 @@ async function classifyUnknownHeldSymbols(account, symbols, env) {
   };
 }
 
-function reconcileLiveAlertState(rawState, account, nowMs) {
+// Only exclude positively valued dust when account/order evidence is complete.
+function confirmedUnreservedDust(account, classification) {
+  if (account?.ok !== true || !Array.isArray(account.balances) ||
+      !Array.isArray(account.openOrders) ||
+      account.openOrderCount !== account.openOrders.length ||
+      !Array.isArray(account.conditionalOrderDiscovery?.failures) ||
+      account.conditionalOrderDiscovery.failures.length) return new Set();
+  const result = new Set();
+  for (const holding of classification?.dustHoldings || []) {
+    const symbol = holding.symbol;
+    const balance = account.balances.find(b => b.symbol === symbol);
+    if (holding.isNonTradableDust === true && balance &&
+        Number.isFinite(balance.available) && balance.available > 0 &&
+        balance.inOrder === 0 &&
+        !account.openOrders.some(o => !o.market || o.market === `${symbol}-EUR` ||
+          String(o.market).startsWith(`${symbol}-`))) result.add(symbol);
+  }
+  return result;
+}
+
+function reconcileLiveAlertState(rawState, account, nowMs, dustSymbols = new Set()) {
   const state = { ...emptyLiveAlertState(), ...(rawState || {}) };
   state.version = "1.9";
   state.notifiedKeys = Array.isArray(state.notifiedKeys) ? state.notifiedKeys.slice(-200) : [];
@@ -1236,7 +1256,7 @@ function reconcileLiveAlertState(rawState, account, nowMs) {
   state.preAlertHistory = Array.isArray(state.preAlertHistory) ? state.preAlertHistory.slice(-200) : [];
   state.signalValidityWindows = Array.isArray(state.signalValidityWindows) ? state.signalValidityWindows.slice(-200) : [];
 
-  const held = heldSymbols(account);
+  const held = new Set([...heldSymbols(account)].filter(symbol => !dustSymbols.has(symbol)));
   const activeByMarket = new Map();
   for (const p of state.activePositions) {
     const symbol = String(p.market || "").replace(/-EUR$/, "");
@@ -2752,13 +2772,25 @@ async function checkAndNotifyStrictSignalsUnlocked(env) {
     branch: "main",
     token: env.PRIVATE_GITHUB_TOKEN
   });
-  const reconciled = reconcileLiveAlertState(rawState, account, nowMs);
+  // Value held assets once, including those already tracked by the alert state.
+  const allClassification = await classifyUnknownHeldSymbols(account, [...heldSymbols(account)], env);
+  const dustSymbols = confirmedUnreservedDust(account, allClassification);
+  const reconciled = reconcileLiveAlertState(rawState, account, nowMs, dustSymbols);
   const state = reconciled.state;
-  const holdingClassification = await classifyUnknownHeldSymbols(
-    account,
-    reconciled.unknownHeldSymbols,
-    env
-  );
+  const unknown = new Set(reconciled.unknownHeldSymbols);
+  const holdingClassification = {
+    materialSymbols: allClassification.materialSymbols.filter(symbol => unknown.has(symbol)),
+    dustHoldings: allClassification.dustHoldings.filter(p => dustSymbols.has(p.symbol)),
+    manualProtectedPositions: allClassification.manualProtectedPositions.filter(p => unknown.has(p.symbol)),
+    conditionalProtectedPositions: allClassification.conditionalProtectedPositions.filter(p => unknown.has(p.symbol)),
+    valuationErrors: allClassification.valuationErrors.filter(p => unknown.has(p.symbol))
+  };
+  // Unconfirmed dust must not bypass the existing unknown-holding gate.
+  for (const p of allClassification.dustHoldings) {
+    if (unknown.has(p.symbol) && !dustSymbols.has(p.symbol)) {
+      holdingClassification.materialSymbols.push(p.symbol);
+    }
+  }
   const blockingUnknownHeldSymbols = holdingClassification.materialSymbols;
   const manualProtectedPositions = holdingClassification.manualProtectedPositions;
   const manualConditionalPositions = holdingClassification.conditionalProtectedPositions;
@@ -3471,6 +3503,30 @@ if (
   );
   if (!dustProbe.isNonTradableDust) {
     throw new Error("dust classification self-test failed: tiny NIL balance must be ignored");
+  }
+
+  const dustAccount = {
+    ok: true, balances: [{ symbol: "ICNT", available: 0.00001, inOrder: 0 }],
+    openOrders: [], openOrderCount: 0, conditionalOrderDiscovery: { failures: [] }
+  };
+  const dustClassification = { dustHoldings: [
+    classifyHoldingTradability(dustAccount.balances[0], { bid: 0.18 }, { minOrderInQuoteAsset: 5 })
+  ] };
+  const probeNow = Date.now();
+  const probePosition = { market: "ICNT-EUR", plannedRiskEur: 1.25, expiresAtMs: probeNow + 60000 };
+  const reconcileProbe = (account, classification, raw) =>
+    reconcileLiveAlertState(raw, account, probeNow, confirmedUnreservedDust(account, classification)).state;
+  if (reconcileProbe(dustAccount, dustClassification, { activePositions: [probePosition] }).activePositions.length ||
+      reconcileProbe(dustAccount, dustClassification, { pendingRecommendations: [probePosition] }).activePositions.length ||
+      reconcileProbe(dustAccount, dustClassification, { pendingRecommendations: [probePosition] }).pendingRecommendations.length !== 1 ||
+      reconcileProbe(dustAccount, { dustHoldings: [] }, { activePositions: [probePosition] }).activePositions.length !== 1 ||
+      reconcileProbe({ ...dustAccount, conditionalOrderDiscovery: { failures: ["unknown"] } }, dustClassification,
+        { activePositions: [probePosition] }).activePositions.length !== 1 ||
+      reconcileProbe({ ...dustAccount, openOrders: [{ market: "ICNT-EUR" }], openOrderCount: 1 }, dustClassification,
+        { activePositions: [probePosition] }).activePositions.length !== 1 ||
+      reconcileProbe({ ...dustAccount, balances: [{ symbol: "ICNT", available: 0.00001, inOrder: 1 }] }, dustClassification,
+        { activePositions: [probePosition] }).activePositions.length !== 1) {
+    throw new Error("live alert dust reconciliation self-test failed");
   }
 
   const materialProbe = classifyHoldingTradability(
