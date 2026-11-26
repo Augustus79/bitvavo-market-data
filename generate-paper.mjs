@@ -169,7 +169,8 @@ const forcedMarkets = [...new Set([
   ...strictResult.state.pendingEntries.map((p)=>p.market),
   ...oppResult.state.openPositions.map((p)=>p.market),
   ...oppResult.state.pendingEntries.map((p)=>p.market),
-  ...exitShadowOpenMarkets
+  ...exitShadowOpenMarkets,
+  ...(readJson("pullback-shadow/open-markets.json", {markets:[]}).markets ?? [])
 ])];
 
 fs.writeFileSync("paper/open-markets.json", JSON.stringify({
