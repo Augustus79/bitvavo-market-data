@@ -137,8 +137,7 @@ const strictState = readState(strictStatePath, STRICT_POLICY);
 const oppState = readState(oppStatePath, OPPORTUNISTIC_POLICY);
 
 if (
-  strictState.lastProcessedSnapshot === snapshot.collectedAt &&
-  oppState.lastProcessedSnapshot === snapshot.collectedAt
+  strictState.lastProcessedSnapshot === snapshot.collectedAt
 ) {
   console.log(JSON.stringify({skipped:true,reason:"snapshot already processed",snapshot:snapshot.collectedAt},null,2));
   process.exit(0);
@@ -148,12 +147,10 @@ const strictResult = strictState.lastProcessedSnapshot === snapshot.collectedAt
   ? { state: strictState, closedTrades: [], skippedSignals: [], events: [] }
   : processPaperState(strictState, signals, snapshot, STRICT_POLICY);
 
-const oppResult = oppState.lastProcessedSnapshot === snapshot.collectedAt
-  ? { state: oppState, closedTrades: [], skippedSignals: [], events: [] }
-  : processPaperState(oppState, signals, snapshot, OPPORTUNISTIC_POLICY);
+const oppResult = { state: oppState, closedTrades: [], skippedSignals: [], events: [] };
 
 fs.writeFileSync(strictStatePath, JSON.stringify(strictResult.state,null,2)+"\n");
-fs.writeFileSync(oppStatePath, JSON.stringify(oppResult.state,null,2)+"\n");
+
 
 appendJsonl("paper/trades.jsonl", strictResult.closedTrades);
 appendJsonl("paper/skipped.jsonl", strictResult.skippedSignals);
@@ -187,7 +184,7 @@ const aiCostEur = Number(aiShadowAudit.estimatedTotalCostEur) || 0;
 const comparison = {
   version: "1.0",
   updatedAt: snapshot.collectedAt,
-  note: "Strict mirrors production BUY logic. Opportunistic is paper-only: clean triggers can enter at net RR >= 1.25 or place a 30-minute retest limit targeting net RR 1.5. AI contextual review is shadow-only and never changes entries, exits, sizing or signal validity.",
+  note: "Strict mirrors production BUY logic. Opportunistic and AI contextual review are paused; historical results are preserved.",
   aiShadowAudit,
   strict: {
     policy: STRICT_POLICY,
@@ -197,6 +194,7 @@ const comparison = {
     realizedEquityAfterAiCostEur: strictResult.state.realizedEquityEur - aiCostEur
   },
   opportunistic: {
+    status: "PAUSED",
     policy: OPPORTUNISTIC_POLICY,
     ...summarize(oppResult.state, oppTrades)
   }
