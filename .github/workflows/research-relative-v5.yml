@@ -1,0 +1,28 @@
+name: Historical relative v5
+on:
+  push:
+    branches: ['research/historical-backtest-v1']
+    paths: ['research/relative-v5.mjs','.github/workflows/research-relative-v5.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 45873051660
+          github-token: ${{ github.token }}
+          pattern: historical-candles-*
+          path: input
+      - run: node research/relative-v5.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relative-report-v5
+          path: relative-report-v5.json
