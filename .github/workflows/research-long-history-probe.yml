@@ -1,0 +1,26 @@
+name: Long history coverage probe
+on:
+  push:
+    branches: ['research/historical-backtest-v1']
+    paths: ['.github/workflows/research-long-history-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: |
+          node --input-type=module <<'JS'
+          const base='https://api.bitvavo.com/v2';
+          const markets=await (await fetch(base+'/markets')).json();
+          if(!Array.isArray(markets))throw Error(JSON.stringify(markets));
+          const usdc=markets.filter(m=>m.quote==='USDC').map(m=>m.market);
+          console.log(JSON.stringify({usdc,eurCount:markets.filter(m=>m.quote==='EUR').length}));
+          for(const market of [...new Set(['BTC-EUR','ETH-EUR','SOL-EUR',...usdc.slice(0,5)])])for(const year of [2020,2021,2022,2023,2024,2025,2026])for(const interval of ['1d','1h']){
+            const start=Date.UTC(year,0,1),end=start+7*86400000;
+            const r=await fetch(base+'/'+market+'/candles?interval='+interval+'&start='+start+'&end='+end+'&limit=200');
+            const a=await r.json();console.log(JSON.stringify({market,year,interval,status:r.status,n:Array.isArray(a)?a.length:null,first:Array.isArray(a)&&a.length?Math.min(...a.map(x=>Number(x[0]))):null,error:Array.isArray(a)?null:a}));
+            await new Promise(r=>setTimeout(r,150));
+          }
+          JS
