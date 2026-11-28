@@ -1,0 +1,53 @@
+name: Long history integrity audit
+on:
+  push:
+    branches: ['research/historical-backtest-v1']
+    paths: ['.github/workflows/research-long-history-audit.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 46146959902
+          github-token: ${{ github.token }}
+          pattern: long-history-*
+          path: input
+      - run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {gunzipSync} from 'node:zlib';
+          const manifest=JSON.parse(fs.readFileSync('input/long-history-manifest/manifest.json'));
+          const seen=new Set(),issues=[],excluded=[],summary={series:0,bars:0,empty:0,byInterval:{}};
+          for(let i=0;i<8;i++){
+            const dir='input/long-history-'+i;
+            const report=JSON.parse(fs.readFileSync(dir+'/report-'+i+'.json'));
+            for(const r of report){
+              const key=r.market+'-'+r.interval,step=r.interval==='1d'?86400000:3600000;
+              if(seen.has(key))issues.push('duplicate series '+key);seen.add(key);
+              const raw=gunzipSync(fs.readFileSync(dir+'/'+key+'.jsonl.gz')).toString().trim();
+              const bars=raw?raw.split('\n').map(JSON.parse):[];
+              if(bars.length!==r.bars)issues.push('count mismatch '+key);
+              let prev=-Infinity;
+              for(const b of bars){if(b.length!==6||!b.every(Number.isFinite)||b[0]<=prev||b[0]%step||b[0]<manifest.start||b[0]>=manifest.end||b[3]<=0||b[2]<Math.max(b[1],b[4])||b[3]>Math.min(b[1],b[4])||b[5]<0)issues.push('invalid candle '+key+' '+b[0]);prev=b[0];}
+              summary.series++;summary.bars+=bars.length;summary.empty+=Number(!bars.length);
+              const z=summary.byInterval[r.interval]??={series:0,bars:0,empty:0};z.series++;z.bars+=bars.length;z.empty+=Number(!bars.length);
+              if(!bars.length||r.errors.length||r.invalid||r.duplicates)excluded.push({key,bars:bars.length,errors:r.errors,invalid:r.invalid,duplicates:r.duplicates});
+            }
+          }
+          for(const t of manifest.tasks)if(!seen.has(t.m+'-'+t.interval))issues.push('missing '+t.m+'-'+t.interval);
+          if(seen.size!==manifest.tasks.length)issues.push('manifest count mismatch');
+          const diagnostic=[];
+          for(const path of ['/markets?market=AF-EUR','/AF-EUR/candles?interval=1d&limit=5','/AF-EUR/candles?interval=1d&start=1577836800000&end=1578441600000&limit=10']){
+            try{const r=await fetch('https://api.bitvavo.com/v2'+path,{signal:AbortSignal.timeout(20000)});diagnostic.push({path,status:r.status,body:await r.text()});}catch(e){diagnostic.push({path,error:String(e)});}
+          }
+          const result={summary,expected:manifest.tasks.length,issues,excluded,diagnostic};fs.writeFileSync('integrity-report.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));if(issues.length)process.exitCode=1;
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: long-history-integrity-report
+          path: integrity-report.json
