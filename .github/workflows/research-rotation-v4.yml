@@ -1,0 +1,28 @@
+name: Historical rotation v4
+on:
+  push:
+    branches: ['research/historical-backtest-v1']
+    paths: ['research/rotation-v4.mjs','.github/workflows/research-rotation-v4.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 45873051660
+          github-token: ${{ github.token }}
+          pattern: historical-candles-*
+          path: input
+      - run: node research/rotation-v4.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rotation-report-v4
+          path: rotation-report-v4.json
